@@ -93,7 +93,7 @@ if (window.TrelloPowerUp) {
         text: 'TeamSync Overview',
         callback: function (tModal) {
           return tModal.modal({
-            url: tModal.signUrl ? tModal.signUrl('./index.html?view=overview'),
+            url: tModal.signUrl ? tModal.signUrl('./index.html?view=overview') : './index.html?view=overview',
             title: 'TeamSync : Board Overview',
             accentColor: '#0052CC',
             fullscreen: true
