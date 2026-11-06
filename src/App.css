@@ -1,0 +1,15 @@
+.ts-avatar-wrap {
+  position: relative;
+}
+
+.ts-badge {
+  transition: all 0.15s ease-in-out;
+}
+
+button {
+  user-select: none;
+}
+
+button:active {
+  transform: translateY(1px);
+}
