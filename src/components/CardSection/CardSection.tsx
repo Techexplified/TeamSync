@@ -291,7 +291,7 @@ export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange 
       />
 
       {/* Feature 4 (P1): Responsibility History placeholder slot */}
-      <div
+      {/* <div
         style={{
           border: '1px dashed #C1C7D0',
           borderRadius: '8px',
@@ -303,7 +303,7 @@ export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange 
         }}
       >
         <strong>Next up: Feature 4 (P1 History & Escalation)</strong> &mdash; Audit trail of all ownership changes, handoffs, and elapsed timers.
-      </div>
+      </div> */}
     </div>
   );
 };
