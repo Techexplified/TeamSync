@@ -19,7 +19,7 @@ export function buildRequestHandoffData(
   currentMember?: TeamMember | null
 ): TeamSyncCardData | null {
   // Rule: Only the currently assigned owner can initiate a handoff to another person
-  if (!data.owner || !currentMember) return null;
+  if (!data.owner?.id || !currentMember?.id) return null;
   if (data.owner.id !== currentMember.id) return null;
   if (data.handoff?.status === 'pending') return null;
   if (toMember.id === data.owner.id || toMember.id === currentMember.id) return null;

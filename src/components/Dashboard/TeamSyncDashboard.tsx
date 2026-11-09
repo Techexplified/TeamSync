@@ -13,7 +13,7 @@ import {
   formatCardDeadline,
   formatExactTimeAgo,
   formatRelativeSyncTime,
-  generateRealtimeAiSummary,
+  // generateRealtimeAiSummary,
   getCardDeadlineTimestamp,
   getCardHandoffDisplay,
   getCardLifecycleStatus,
@@ -77,9 +77,9 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   const [sortAsc, setSortAsc] = useState(true);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isRegeneratingAi, setIsRegeneratingAi] = useState(false);
-  const [aiVariant, setAiVariant] = useState(0);
-  const [aiGeneratedAt, setAiGeneratedAt] = useState<string>(new Date().toISOString());
+  // const [isRegeneratingAi, setIsRegeneratingAi] = useState(false);
+  // const [aiVariant, setAiVariant] = useState(0);
+  // const [aiGeneratedAt, setAiGeneratedAt] = useState<string>(new Date().toISOString());
   const [exportFeedback, setExportFeedback] = useState<string | null>(null);
   const [inspectedCardId, setInspectedCardId] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
@@ -310,10 +310,10 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   }, [cards]);
 
   // Live AI Summary bullets
-  const aiBullets = useMemo(
-    () => generateRealtimeAiSummary(cards, allKnownMembers, metrics, settings, aiVariant),
-    [cards, allKnownMembers, metrics, settings, aiVariant]
-  );
+  // const aiBullets = useMemo(
+  //   () => generateRealtimeAiSummary(cards, allKnownMembers, metrics, settings, aiVariant),
+  //   [cards, allKnownMembers, metrics, settings, aiVariant]
+  // );
 
   // Filtered Cards
   const filteredCards = useMemo(() => {
@@ -555,15 +555,15 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
     setTimeout(() => setExportFeedback(null), 2500);
   };
 
-  const handleRegenerate = async () => {
-    setIsRegeneratingAi(true);
-    await loadData({ silent: true });
-    setTimeout(() => {
-      setAiVariant((v) => v + 1);
-      setAiGeneratedAt(new Date().toISOString());
-      setIsRegeneratingAi(false);
-    }, 350);
-  };
+  // const handleRegenerate = async () => {
+  //   setIsRegeneratingAi(true);
+  //   await loadData({ silent: true });
+  //   setTimeout(() => {
+  //     setAiVariant((v) => v + 1);
+  //     setAiGeneratedAt(new Date().toISOString());
+  //     setIsRegeneratingAi(false);
+  //   }, 350);
+  // };
 
   const handleSaveSettings = async (next: TeamSyncSettings) => {
     if (context.saveSettings) {

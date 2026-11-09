@@ -50,7 +50,9 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
 
   const isPending = handoff?.status === 'pending';
   const isDeclined = handoff?.status === 'declined';
-  const isCurrentOwner = Boolean(owner && currentMember && owner.id === currentMember.id);
+  const isCurrentOwner = Boolean(
+    owner?.id && currentMember?.id && owner.id === currentMember.id
+  );
   const eligibleRecipients = members.filter(
     (m) => m.id !== owner?.id && m.id !== currentMember?.id
   );

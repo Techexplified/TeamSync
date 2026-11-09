@@ -5,6 +5,7 @@ import type {
   HistoryEventType,
   ITrelloContext,
 } from '../../types/teamsync';
+import { subscribeToTeamSyncUpdates } from '../../trello/trelloBridge';
 import { OwnerSection } from './OwnerSection';
 import { HandoffSection } from './HandoffSection';
 import { DEFAULT_ESCALATION_THRESHOLD_HOURS, formatExactTimeAgo } from '../../utils/statusUtils';
@@ -59,6 +60,7 @@ export const CardSection: React.FC<CardSectionProps> = ({
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
   const alertedEscalationRef = useRef<Set<string>>(new Set());
+  const lastCardJsonRef = useRef<string>('');
 
   const thresholdHours = escalationThresholdHours ?? loadedThresholdHours;
   const resolvedEscalationContact =
@@ -70,74 +72,106 @@ export const CardSection: React.FC<CardSectionProps> = ({
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      context.getCardData(),
-      context.getMembers(),
-      context.getCurrentMember(),
-      context.getSettings ? context.getSettings() : Promise.resolve(null),
-    ])
-      .then(([cardData, memberList, current, settings]) => {
-        if (!active) return;
+    let initialLoad = true;
 
-        const effectiveThreshold = escalationThresholdHours ?? settings?.escalationThresholdHours ?? DEFAULT_ESCALATION_THRESHOLD_HOURS;
-        const contactId = settings?.escalationContactId || '';
-        const contactMember =
-          escalationContact !== undefined
-            ? escalationContact
-            : contactId
-              ? memberList.find((m) => m.id === contactId) || null
-              : null;
+    const loadSnapshot = () => {
+      Promise.all([
+        context.getCardData(),
+        context.getMembers(),
+        context.getCurrentMember().catch(() => null),
+        context.getSettings ? context.getSettings().catch(() => null) : Promise.resolve(null),
+      ])
+        .then(([cardData, memberList, current, settings]) => {
+          if (!active) return;
 
-        const { nextData, didChange } = buildEscalationData(
-          cardData,
-          effectiveThreshold,
-          contactMember,
-          null
-        );
+          const effectiveThreshold =
+            escalationThresholdHours ??
+            settings?.escalationThresholdHours ??
+            DEFAULT_ESCALATION_THRESHOLD_HOURS;
+          const contactId = settings?.escalationContactId || '';
+          const contactMember =
+            escalationContact !== undefined
+              ? escalationContact
+              : contactId
+                ? memberList.find((m) => m.id === contactId) || null
+                : null;
 
-        setData(nextData);
-        setMembers(memberList);
-        setCurrentMember(current);
-        if (settings) {
-          setLoadedThresholdHours(settings.escalationThresholdHours);
-          setLoadedEscalationContactId(settings.escalationContactId || '');
-        }
-
-        if (didChange) {
-          context.setCardData(nextData).catch((err) => {
-            console.warn('Could not persist automatic escalation metadata', err);
-          });
-        }
-
-        if (
-          nextData.handoff?.status === 'pending' &&
-          nextData.handoff.escalatedAt &&
-          !nextData.handoff.escalationAcknowledgedAt &&
-          contactMember &&
-          current?.id === contactMember.id &&
-          !alertedEscalationRef.current.has(nextData.handoff.id)
-        ) {
-          alertedEscalationRef.current.add(nextData.handoff.id);
-          context.notify?.(
-            `Escalation Alert: Handoff from ${nextData.handoff.fromMember.fullName} to ${nextData.handoff.toMember.fullName} exceeded ${effectiveThreshold}h`
+          const { nextData, didChange } = buildEscalationData(
+            cardData,
+            effectiveThreshold,
+            contactMember,
+            null
           );
-        }
-      })
-      .catch((e) => {
-        console.error('Failed to load card data', e);
-      })
-      .finally(() => {
-        if (!active) return;
-        setLoading(false);
-        setTimeout(() => context.sizeToContent?.(), 50);
-      });
+
+          const nextJson = JSON.stringify(nextData);
+          if (initialLoad || nextJson !== lastCardJsonRef.current) {
+            lastCardJsonRef.current = nextJson;
+            setData(nextData);
+            setTimeout(() => context.sizeToContent?.(), 50);
+          }
+
+          setMembers(memberList);
+          setCurrentMember(current);
+          if (settings) {
+            setLoadedThresholdHours(settings.escalationThresholdHours);
+            setLoadedEscalationContactId(settings.escalationContactId || '');
+          }
+
+          if (didChange) {
+            context.setCardData(nextData).catch((err) => {
+              console.warn('Could not persist automatic escalation metadata', err);
+            });
+          }
+
+          if (
+            nextData.handoff?.status === 'pending' &&
+            nextData.handoff.escalatedAt &&
+            !nextData.handoff.escalationAcknowledgedAt &&
+            contactMember &&
+            current?.id === contactMember.id &&
+            !alertedEscalationRef.current.has(nextData.handoff.id)
+          ) {
+            alertedEscalationRef.current.add(nextData.handoff.id);
+            context.notify?.(
+              `Escalation Alert: Handoff from ${nextData.handoff.fromMember.fullName} to ${nextData.handoff.toMember.fullName} exceeded ${effectiveThreshold}h`
+            );
+          }
+        })
+        .catch((e) => {
+          console.error('Failed to load card data', e);
+        })
+        .finally(() => {
+          if (!active) return;
+          if (initialLoad) {
+            initialLoad = false;
+            setLoading(false);
+            setTimeout(() => context.sizeToContent?.(), 50);
+          }
+        });
+    };
+
+    loadSnapshot();
+
+    const unsubscribeSync = subscribeToTeamSyncUpdates(loadSnapshot);
+    const handleFocus = () => loadSnapshot();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') loadSnapshot();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    const pollTimer = window.setInterval(loadSnapshot, 10000);
 
     return () => {
       active = false;
+      unsubscribeSync();
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.clearInterval(pollTimer);
     };
   }, [context, escalationThresholdHours, escalationContact]);
 
   const updateCardData = async (newData: TeamSyncCardData) => {
+    lastCardJsonRef.current = JSON.stringify(newData);
     setData(newData);
     await context.setCardData(newData);
     if (onDataChange) onDataChange(newData);
@@ -228,12 +262,34 @@ export const CardSection: React.FC<CardSectionProps> = ({
   // P0: Request Task Handoff
   // Guardrail: Only the assigned owner can initiate a handoff, and owner remains unchanged until accepted
   const handleRequestHandoff = async (toMember: TeamMember, note: string) => {
-    if (!data.owner || !currentMember || data.owner.id !== currentMember.id) {
-      context.notify?.('Only the assigned owner of this task can send a handoff.');
+    // Re-read authoritative card owner & active member before initiating handoff
+    const [latestData, latestCurrentMember] = await Promise.all([
+      context.getCardData().catch(() => data),
+      context.getCurrentMember().catch(() => currentMember),
+    ]);
+
+    if (
+      !latestData.owner?.id ||
+      !latestCurrentMember?.id ||
+      latestData.owner.id !== latestCurrentMember.id
+    ) {
+      lastCardJsonRef.current = JSON.stringify(latestData);
+      setData(latestData);
+      if (latestCurrentMember) setCurrentMember(latestCurrentMember);
+      context.notify?.(
+        latestData.owner
+          ? `Only ${latestData.owner.fullName} can send a handoff for this task.`
+          : 'Only the assigned owner of this task can send a handoff.'
+      );
       return;
     }
 
-    const newData = buildRequestHandoffData(data, toMember, note, currentMember);
+    const newData = buildRequestHandoffData(
+      latestData,
+      toMember,
+      note,
+      latestCurrentMember
+    );
     if (!newData) {
       context.notify?.('Unable to send handoff request.');
       return;
