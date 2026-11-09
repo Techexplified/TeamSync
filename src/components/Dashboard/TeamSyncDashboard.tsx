@@ -812,7 +812,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
         {/* Right Live Board Status & Refresh */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div
+          {/* <div
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -850,7 +850,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
             <span>
               {boardInfo.isConnected ? 'Connected to this board' : 'Sync connection error'}
             </span>
-          </div>
+          </div> */}
 
           <button
             type="button"
@@ -1757,7 +1757,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                     </div> */}
 
                     {/* All Deadlines (Dynamic Real-Time Buckets) */}
-                    <div style={{ position: 'relative' }}>
+                    {/* <div style={{ position: 'relative' }}>
                       <select
                         value={selectedDeadline}
                         onChange={(e) => setSelectedDeadline(e.target.value)}
@@ -1806,7 +1806,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                       >
                         <polyline points="6 9 12 15 18 9" />
                       </svg>
-                    </div>
+                    </div> */}
                   </>
                 )}
               </div>
@@ -1874,7 +1874,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                           color: '#475569',
                           cursor: 'pointer',
                           userSelect: 'none',
-                          width: '32%',
+                          width: '38%',
                         }}
                       >
                         Task {renderSortIcon('name')}
@@ -1888,24 +1888,10 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                           color: '#475569',
                           cursor: 'pointer',
                           userSelect: 'none',
-                          width: '21%',
+                          width: '24%',
                         }}
                       >
                         Owner {renderSortIcon('owner')}
-                      </th>
-                      <th
-                        onClick={() => toggleSort('deadline')}
-                        style={{
-                          padding: '12px 16px',
-                          fontSize: '12px',
-                          fontWeight: 700,
-                          color: '#475569',
-                          cursor: 'pointer',
-                          userSelect: 'none',
-                          width: '15%',
-                        }}
-                      >
-                        Deadline {renderSortIcon('deadline')}
                       </th>
                       <th
                         onClick={() => toggleSort('status')}
@@ -1916,7 +1902,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                           color: '#475569',
                           cursor: 'pointer',
                           userSelect: 'none',
-                          width: '15%',
+                          width: '17%',
                         }}
                       >
                         Status {renderSortIcon('status')}
@@ -1930,7 +1916,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                           color: '#475569',
                           cursor: 'pointer',
                           userSelect: 'none',
-                          width: '17%',
+                          width: '21%',
                         }}
                         title="Accountability remains on current owner until handoff recipient accepts"
                       >
@@ -1940,7 +1926,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                   </thead>
                   <tbody>
                     {sortedCards.map((card, idx) => {
-                      const overdue = isCardOverdue(card);
                       const status = getCardLifecycleStatus(card);
                       const handoff = getCardHandoffDisplay(
                         card,
@@ -1948,7 +1933,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                         escalationContact?.fullName,
                         nowMs
                       );
-                      const deadlineLabel = formatCardDeadline(card);
                       const ho = card.data.handoff;
 
                       return (
@@ -1986,27 +1970,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                               >
                                 {card.data.owner?.fullName || 'Unassigned'}
                               </span>
-                            </div>
-                          </td>
-
-                          {/* Deadline */}
-                          <td style={{ padding: '12px 16px', fontSize: '13px' }}>
-                            <div
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                color: overdue ? '#DC2626' : '#64748B',
-                                fontWeight: overdue ? 600 : 500,
-                              }}
-                            >
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
-                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                                <line x1="16" y1="2" x2="16" y2="6" />
-                                <line x1="8" y1="2" x2="8" y2="6" />
-                                <line x1="3" y1="10" x2="21" y2="10" />
-                              </svg>
-                              <span>{deadlineLabel}</span>
                             </div>
                           </td>
 
@@ -2182,7 +2145,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
                     {sortedCards.length === 0 && (
                       <tr>
-                        <td colSpan={5} style={{ padding: '32px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
+                        <td colSpan={4} style={{ padding: '32px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
                           No tasks match the active filters.
                         </td>
                       </tr>
