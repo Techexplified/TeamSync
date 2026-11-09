@@ -3,7 +3,7 @@ import type { TaskOwner, TeamMember } from '../../types/teamsync';
 import { Avatar } from '../common/Avatar';
 import { Badge } from '../common/Badge';
 import {
-  UserIcon,
+  // UserIcon,
   UserCheckIcon,
   UserPlusIcon,
   AlertCircleIcon,
@@ -147,6 +147,7 @@ export const OwnerSection: React.FC<OwnerSectionProps> = ({
           </div>
 
           {/* Action buttons */}
+          {/*
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
               type="button"
@@ -171,6 +172,7 @@ export const OwnerSection: React.FC<OwnerSectionProps> = ({
               <ChevronDownIcon size={13} />
             </button>
           </div>
+          */}
         </div>
       ) : (
         /* Unassigned Warning State */
