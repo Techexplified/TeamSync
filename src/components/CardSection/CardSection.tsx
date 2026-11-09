@@ -84,14 +84,25 @@ export const CardSection: React.FC<CardSectionProps> = ({
   };
 
   // P0: Assign or Reassign Primary Owner
-  const handleAssignOwner = async (member: TeamMember) => {
+  const handleAssignOwner = async (
+    member: TeamMember,
+    options?: { viaClaim?: boolean }
+  ) => {
+    // Guardrail: unassigned tasks cannot be assigned to oneself manually; must use Claim Task
+    if (!data.owner && !options?.viaClaim && currentMember && member.id === currentMember.id) {
+      context.notify?.('Use "Claim Task" to assign this unassigned task to yourself.');
+      return;
+    }
+
     const actor = currentMember || member;
     const now = new Date().toISOString();
     const isReassignment = !!data.owner;
 
-    const summary = isReassignment
-      ? `${actor.fullName} transferred primary ownership to ${member.fullName}`
-      : `${actor.fullName} assigned primary ownership to ${member.fullName}`;
+    const summary = options?.viaClaim
+      ? `${actor.fullName} claimed primary ownership`
+      : isReassignment
+        ? `${actor.fullName} transferred primary ownership to ${member.fullName}`
+        : `${actor.fullName} assigned primary ownership to ${member.fullName}`;
 
     const newHistory = [
       {
@@ -119,7 +130,11 @@ export const CardSection: React.FC<CardSectionProps> = ({
     };
 
     await updateCardData(newData);
-    context.notify?.(`Primary owner assigned to ${member.fullName}`);
+    context.notify?.(
+      options?.viaClaim
+        ? `You claimed primary ownership of this task`
+        : `Primary owner assigned to ${member.fullName}`
+    );
   };
 
   // P0: Remove Owner (Mark as Unassigned)

@@ -16,7 +16,7 @@ interface OwnerSectionProps {
   owner: TaskOwner | null;
   members: TeamMember[];
   currentMember: TeamMember | null;
-  onAssignOwner: (member: TeamMember) => Promise<void>;
+  onAssignOwner: (member: TeamMember, options?: { viaClaim?: boolean }) => Promise<void>;
   onRemoveOwner: () => Promise<void>;
 }
 
@@ -31,12 +31,23 @@ export const OwnerSection: React.FC<OwnerSectionProps> = ({
   const [search, setSearch] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
 
-  const filteredMembers = members.filter((m) =>
+  // Exclude currently logged-in user from manual assignment list when task has no owner
+  const assignableMembers =
+    !owner && currentMember
+      ? members.filter((m) => m.id !== currentMember.id)
+      : members;
+
+  const filteredMembers = assignableMembers.filter((m) =>
     m.fullName.toLowerCase().includes(search.toLowerCase()) ||
     m.role?.toLowerCase().includes(search.toLowerCase())
   );
 
   const handleSelect = async (member: TeamMember) => {
+    // Guardrail: users cannot manually assign an unassigned task to themselves
+    if (!owner && currentMember && member.id === currentMember.id) {
+      return;
+    }
+
     setIsUpdating(true);
     try {
       await onAssignOwner(member);
@@ -49,7 +60,14 @@ export const OwnerSection: React.FC<OwnerSectionProps> = ({
 
   const handleClaim = async () => {
     if (!currentMember) return;
-    await handleSelect(currentMember);
+    setIsUpdating(true);
+    try {
+      await onAssignOwner(currentMember, { viaClaim: true });
+      setShowPicker(false);
+      setSearch('');
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
   const handleRemove = async () => {
@@ -309,7 +327,9 @@ export const OwnerSection: React.FC<OwnerSectionProps> = ({
 
             {filteredMembers.length === 0 && (
               <div style={{ fontSize: '11px', color: '#6B778C', padding: '8px', textAlign: 'center' }}>
-                No members found
+                {!owner && assignableMembers.length === 0
+                  ? 'No other team members available. Use Claim Task to take ownership.'
+                  : 'No members found'}
               </div>
             )}
           </div>
