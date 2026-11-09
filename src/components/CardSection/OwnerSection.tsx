@@ -274,6 +274,8 @@ export const OwnerSection: React.FC<OwnerSectionProps> = ({
                 border: '1px solid #C1C7D0',
                 boxSizing: 'border-box',
                 backgroundColor: '#ffffff',
+                color: '#172B4D',
+                colorScheme: 'light',
               }}
               autoFocus
             />

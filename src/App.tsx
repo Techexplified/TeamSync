@@ -238,6 +238,7 @@ export function App() {
               style={{
                 backgroundColor: '#1E293B',
                 color: '#ffffff',
+                colorScheme: 'dark',
                 border: '1px solid #334155',
                 borderRadius: '4px',
                 padding: '2px 6px',
@@ -318,6 +319,7 @@ export function App() {
               border: '1px solid #475569',
               backgroundColor: '#0F172A',
               color: '#ffffff',
+              colorScheme: 'dark',
             }}
           />
           <select
@@ -330,6 +332,7 @@ export function App() {
               border: '1px solid #475569',
               backgroundColor: '#0F172A',
               color: '#ffffff',
+              colorScheme: 'dark',
             }}
           >
             <option value="High">High Priority</option>

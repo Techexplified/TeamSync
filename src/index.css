@@ -14,6 +14,7 @@ body,
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   color: #172b4d;
   background-color: #fafbfc;
+  color-scheme: light;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -22,6 +23,25 @@ button,
 textarea,
 select {
   font-family: inherit;
+}
+
+input,
+textarea,
+select {
+  color: #172b4d;
+  background-color: #ffffff;
+  color-scheme: light;
+}
+
+select option {
+  color: #172b4d;
+  background-color: #ffffff;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #6b778c;
+  opacity: 1;
 }
 
 button:focus-visible,

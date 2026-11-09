@@ -259,6 +259,9 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
                       fontSize: '12px',
                       borderRadius: '4px',
                       border: '1px solid #FFBDAD',
+                      backgroundColor: '#ffffff',
+                      color: '#172B4D',
+                      colorScheme: 'light',
                       boxSizing: 'border-box',
                       marginBottom: '6px',
                     }}
@@ -422,8 +425,8 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
           </div>
 
           {/* Next Owner Selector */}
-          <div style={{ marginBottom: '8px' }}>
-            <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#5E6C84', marginBottom: '3px' }}>
+          <div style={{ marginBottom: '10px' }}>
+            <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#5E6C84', marginBottom: '4px' }}>
               Next Accountable Owner (Required)
             </label>
             <select
@@ -432,18 +435,28 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
               onChange={(e) => setSelectedRecipientId(e.target.value)}
               style={{
                 width: '100%',
-                padding: '6px 8px',
+                padding: '7px 10px',
                 fontSize: '12px',
+                fontWeight: selectedRecipientId ? 500 : 400,
                 borderRadius: '4px',
                 border: '1px solid #C1C7D0',
                 backgroundColor: '#ffffff',
+                color: selectedRecipientId ? '#172B4D' : '#6B778C',
+                colorScheme: 'light',
+                cursor: 'pointer',
               }}
             >
-              <option value="">Select recipient teammate...</option>
+              <option value="" style={{ backgroundColor: '#ffffff', color: '#6B778C' }}>
+                Select recipient teammate...
+              </option>
               {members
                 .filter((m) => m.id !== owner?.id)
                 .map((m) => (
-                  <option key={m.id} value={m.id}>
+                  <option
+                    key={m.id}
+                    value={m.id}
+                    style={{ backgroundColor: '#ffffff', color: '#172B4D' }}
+                  >
                     {m.fullName} {m.role ? `(${m.role})` : ''}
                   </option>
                 ))}
@@ -452,22 +465,28 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
 
           {/* Context Note */}
           <div style={{ marginBottom: '10px' }}>
-            <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#5E6C84', marginBottom: '3px' }}>
+            <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#5E6C84', marginBottom: '4px' }}>
               Handoff Note & Context (Recommended)
             </label>
             <textarea
-              rows={2}
+              rows={3}
               placeholder="What was completed? What specific next steps or blockers should the recipient know?"
               value={note}
               onChange={(e) => setNote(e.target.value)}
               style={{
                 width: '100%',
-                padding: '6px 8px',
+                minHeight: '68px',
+                padding: '7px 10px',
                 fontSize: '12px',
+                lineHeight: 1.45,
                 borderRadius: '4px',
                 border: '1px solid #C1C7D0',
+                backgroundColor: '#ffffff',
+                color: '#172B4D',
+                colorScheme: 'light',
                 boxSizing: 'border-box',
                 fontFamily: 'inherit',
+                resize: 'vertical',
               }}
             />
           </div>
