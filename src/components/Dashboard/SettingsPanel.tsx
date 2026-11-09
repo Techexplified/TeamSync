@@ -139,6 +139,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   fontSize: '13px',
                   borderRadius: '8px',
                   border: '1px solid #CBD5E1',
+                  backgroundColor: '#ffffff',
+                  color: '#0F172A',
+                  colorScheme: 'light',
+                  boxSizing: 'border-box',
                 }}
               />
               <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
@@ -181,6 +185,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   fontSize: '13px',
                   borderRadius: '8px',
                   border: '1px solid #CBD5E1',
+                  backgroundColor: '#ffffff',
+                  color: '#0F172A',
+                  colorScheme: 'light',
+                  boxSizing: 'border-box',
                 }}
               />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '6px', gap: '6px' }}>
@@ -227,15 +235,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 borderRadius: '8px',
                 border: '1px solid #CBD5E1',
                 backgroundColor: '#ffffff',
+                color: '#0F172A',
+                colorScheme: 'light',
               }}
             >
-              <option value="">No specific escalation contact (notify card owner)</option>
+              <option value="">No specific escalation contact (flag board only)</option>
               {members.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.fullName} {m.role ? `(${m.role})` : m.username ? `(@${m.username})` : ''}
                 </option>
               ))}
             </select>
+            <div style={{ fontSize: '11px', color: '#64748B', marginTop: '6px' }}>
+              When a pending handoff exceeds {draft.escalationThresholdHours}h, this contact receives dashboard &amp; card-level escalation alerts and can acknowledge escalations.
+            </div>
           </div>
         </div>
 
@@ -267,6 +280,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   borderRadius: '8px',
                   border: '1px solid #CBD5E1',
                   backgroundColor: '#ffffff',
+                  color: '#0F172A',
+                  colorScheme: 'light',
                 }}
               >
                 <option value={5}>Every 5 seconds (Fastest)</option>

@@ -114,7 +114,29 @@ export function formatExactTimeAgo(createdAt?: string, nowMs: number = Date.now(
 }
 
 /**
- * Short compact duration for compact table badges (e.g. "15m", "28h", "2d")
+ * Formats an exact millisecond duration (e.g. "Just now", "12 mins", "2h 15m", "1d 4h")
+ */
+export function formatDurationMs(diffMs: number): string {
+  const safeMs = Math.max(0, diffMs);
+  const totalMinutes = Math.floor(safeMs / (1000 * 60));
+  if (totalMinutes < 1) return 'under 1 min';
+  if (totalMinutes < 60) {
+    return `${totalMinutes} min${totalMinutes === 1 ? '' : 's'}`;
+  }
+  const totalHours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return remainingMinutes > 0
+      ? `${totalHours}h ${remainingMinutes}m`
+      : `${totalHours} hour${totalHours === 1 ? '' : 's'}`;
+  }
+  const days = Math.floor(totalHours / 24);
+  const remainingHours = totalHours % 24;
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+}
+
+/**
+ * Formats compact short duration for table badges (e.g. "15m", "28h", "2d")
  */
 export function formatCompactHours(hours: number): string {
   if (hours < 1) {
@@ -282,6 +304,9 @@ export interface HandoffDisplayInfo {
   label: string;
   tooltip: string;
   hoursPending: number;
+  exactAgo?: string;
+  fromName?: string;
+  toName?: string;
 }
 
 /**
@@ -289,21 +314,35 @@ export interface HandoffDisplayInfo {
  */
 export function getCardHandoffDisplay(
   card: BoardCardSummary,
-  escalationThresholdHours: number = DEFAULT_ESCALATION_THRESHOLD_HOURS
+  escalationThresholdHours: number = DEFAULT_ESCALATION_THRESHOLD_HOURS,
+  escalationContactName?: string,
+  nowMs: number = Date.now()
 ): HandoffDisplayInfo {
   const handoff = card.data.handoff;
 
   if (handoff?.status === 'pending') {
-    const hours = getHoursPending(handoff.createdAt);
+    const createdTs = handoff.createdAt ? new Date(handoff.createdAt).getTime() : nowMs;
+    const hours =
+      handoff.createdAt && !Number.isNaN(createdTs)
+        ? Math.max(0, Math.round(((nowMs - createdTs) / (1000 * 60 * 60)) * 10) / 10)
+        : 0;
     const escalated = hours >= escalationThresholdHours;
+    const sender = handoff.fromMember?.fullName || card.data.owner?.fullName || 'Owner';
     const recipient = handoff.toMember?.fullName || 'Teammate';
+    const exactAgo = formatExactTimeAgo(handoff.createdAt, nowMs);
+    const leadNote = escalationContactName
+      ? ` Escalation lead alerted: ${escalationContactName}.`
+      : '';
     return {
       state: escalated ? 'escalated' : 'pending',
-      label: escalated ? `Pending (${formatCompactHours(hours)})` : 'Pending',
+      label: escalated ? `Escalated (${formatCompactHours(hours)})` : 'Pending',
       tooltip: escalated
-        ? `Escalated: Handoff to ${recipient} waiting ${formatHoursPending(hours)} (>${escalationThresholdHours}h threshold). Owner stays accountable until accepted.`
-        : `Handoff requested to ${recipient} (${formatHoursPending(hours)}). Waiting for acceptance.`,
+        ? `Escalated: ${sender} → ${recipient} waiting ${exactAgo} (>${escalationThresholdHours}h threshold). Owner stays accountable until accepted.${leadNote}`
+        : `Handoff requested: ${sender} → ${recipient} (${exactAgo}). Waiting for acceptance.`,
       hoursPending: hours,
+      exactAgo,
+      fromName: sender,
+      toName: recipient,
     };
   }
 

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo } from 'react';
 import type {
   BoardCardSummary,
   ITrelloContext,
+  TeamMember,
   TeamSyncSettings,
   TaskPriority,
 } from '../../types/teamsync';
@@ -19,6 +20,7 @@ interface CardInspectorModalProps {
   card: BoardCardSummary;
   context: ITrelloContext;
   settings: TeamSyncSettings;
+  escalationContact?: TeamMember | null;
   onClose: () => void;
   onUpdated: () => void;
 }
@@ -27,6 +29,7 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
   card,
   context,
   settings,
+  escalationContact = null,
   onClose,
   onUpdated,
 }) => {
@@ -295,6 +298,8 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
                     borderRadius: '6px',
                     border: '1px solid #CBD5E1',
                     backgroundColor: '#ffffff',
+                    color: '#0F172A',
+                    colorScheme: 'light',
                   }}
                 >
                   <option value="High">High Priority</option>
@@ -312,6 +317,8 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
                     borderRadius: '6px',
                     border: '1px solid #CBD5E1',
                     backgroundColor: '#ffffff',
+                    color: '#0F172A',
+                    colorScheme: 'light',
                   }}
                   title="Change due date"
                 />
@@ -324,6 +331,7 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
             key={card.id}
             context={scopedContext}
             escalationThresholdHours={settings.escalationThresholdHours}
+            escalationContact={escalationContact}
             onDataChange={() => onUpdated()}
           />
         </div>

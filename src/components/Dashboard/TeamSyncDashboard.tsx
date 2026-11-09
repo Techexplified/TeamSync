@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type {
   BoardCardSummary,
   BoardInfo,
@@ -11,6 +11,7 @@ import {
   DEFAULT_SETTINGS,
   computeDashboardMetrics,
   formatCardDeadline,
+  formatExactTimeAgo,
   formatRelativeSyncTime,
   generateRealtimeAiSummary,
   getCardDeadlineTimestamp,
@@ -23,8 +24,16 @@ import {
   isCardOverdue,
   matchesDeadlineFilter,
 } from '../../utils/statusUtils';
+import {
+  buildAcceptHandoffData,
+  buildCancelHandoffData,
+  buildDeclineHandoffData,
+  buildEscalationData,
+} from '../../utils/handoffActions';
 import { SettingsPanel } from './SettingsPanel';
 import { CardInspectorModal } from './CardInspectorModal';
+import { PendingActionsPanel, type PendingScope } from './PendingActionsPanel';
+import { HistoryFeedPanel } from './HistoryFeedPanel';
 
 interface TeamSyncDashboardProps {
   context: ITrelloContext;
@@ -41,6 +50,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 }) => {
   const [cards, setCards] = useState<BoardCardSummary[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
+  const [currentMember, setCurrentMember] = useState<TeamMember | null>(null);
   const [boardInfo, setBoardInfo] = useState<BoardInfo>({
     id: 'board',
     name: 'Product Sprint',
@@ -52,7 +62,8 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
   const [loading, setLoading] = useState(true);
   const [activeNav, setActiveNav] = useState<'dashboard' | 'settings'>('dashboard');
-  const [activeTab, setActiveTab] = useState<'task' | 'member'>('task');
+  const [activeTab, setActiveTab] = useState<'task' | 'pending' | 'member' | 'history'>('task');
+  const [pendingScope, setPendingScope] = useState<PendingScope>('all');
 
   const [selectedMember, setSelectedMember] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
@@ -71,12 +82,15 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   const [aiGeneratedAt, setAiGeneratedAt] = useState<string>(new Date().toISOString());
   const [exportFeedback, setExportFeedback] = useState<string | null>(null);
   const [inspectedCardId, setInspectedCardId] = useState<string | null>(null);
-  const [, setClockTick] = useState(0);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const autoEscalatedKeysRef = useRef<Set<string>>(new Set());
+  const managerAlertedIdsRef = useRef<Set<string>>(new Set());
 
   const fetchBoardSnapshot = useCallback(async () => {
-    const [boardCards, memberList, info, loadedSettings] = await Promise.all([
+    const [boardCards, memberList, current, info, loadedSettings] = await Promise.all([
       context.getBoardCards ? context.getBoardCards() : Promise.resolve([]),
       context.getMembers(),
+      context.getCurrentMember().catch(() => null),
       context.getBoardInfo
         ? context.getBoardInfo()
         : Promise.resolve({
@@ -89,9 +103,58 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
       context.getSettings ? context.getSettings() : Promise.resolve(DEFAULT_SETTINGS),
     ]);
 
+    const escalationContactMember = loadedSettings.escalationContactId
+      ? memberList.find((m) => m.id === loadedSettings.escalationContactId) || null
+      : null;
+
+    const processedCards = boardCards.map((card) => {
+      if (card.data.handoff?.status !== 'pending') return card;
+      const syncKey = `${card.id}:${card.data.handoff.id}:${escalationContactMember?.id || 'none'}`;
+      if (autoEscalatedKeysRef.current.has(syncKey)) return card;
+
+      const { nextData, didChange } = buildEscalationData(
+        card.data,
+        loadedSettings.escalationThresholdHours,
+        escalationContactMember,
+        null
+      );
+
+      if (didChange) {
+        autoEscalatedKeysRef.current.add(syncKey);
+        context.setCardData(nextData, card.id).catch((err) => {
+          console.warn('Failed to persist auto-escalation state for card', card.id, err);
+        });
+        return { ...card, data: nextData };
+      }
+
+      return card;
+    });
+
+    if (escalationContactMember && current?.id === escalationContactMember.id) {
+      const newlyAlerted = processedCards.filter((card) => {
+        const ho = card.data.handoff;
+        if (!ho || ho.status !== 'pending' || !ho.escalatedAt || ho.escalationAcknowledgedAt) {
+          return false;
+        }
+        return !managerAlertedIdsRef.current.has(ho.id);
+      });
+
+      if (newlyAlerted.length > 0) {
+        for (const c of newlyAlerted) {
+          if (c.data.handoff) managerAlertedIdsRef.current.add(c.data.handoff.id);
+        }
+        context.notify?.(
+          newlyAlerted.length === 1
+            ? `Escalation Alert: "${newlyAlerted[0].name}" handoff exceeded ${loadedSettings.escalationThresholdHours}h`
+            : `Escalation Alert: ${newlyAlerted.length} handoffs exceeded ${loadedSettings.escalationThresholdHours}h threshold`
+        );
+      }
+    }
+
     return {
-      boardCards,
+      boardCards: processedCards,
       memberList,
+      current,
       info: {
         ...info,
         lastSyncedAt: new Date().toISOString(),
@@ -109,8 +172,10 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
         const snapshot = await fetchBoardSnapshot();
         setCards(snapshot.boardCards);
         setMembers(snapshot.memberList);
+        setCurrentMember(snapshot.current);
         setBoardInfo(snapshot.info);
         setSettings(snapshot.loadedSettings);
+        setNowMs(Date.now());
         onDataSynced?.();
       } catch (e) {
         console.error('Failed to load dashboard data', e);
@@ -134,8 +199,10 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
         if (!active) return;
         setCards(snapshot.boardCards);
         setMembers(snapshot.memberList);
+        setCurrentMember(snapshot.current);
         setBoardInfo(snapshot.info);
         setSettings(snapshot.loadedSettings);
+        setNowMs(Date.now());
         onDataSynced?.();
       })
       .catch((e) => {
@@ -180,7 +247,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   // Live relative clock tick for "Generated X ago" & elapsed handoff timers
   useEffect(() => {
     const tick = window.setInterval(() => {
-      setClockTick((n) => n + 1);
+      setNowMs(Date.now());
     }, 15000);
     return () => window.clearInterval(tick);
   }, []);
@@ -205,8 +272,42 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
     return Array.from(map.values());
   }, [members, cards]);
 
+  const escalationContact = useMemo(() => {
+    if (!settings.escalationContactId) return null;
+    return allKnownMembers.find((m) => m.id === settings.escalationContactId) || null;
+  }, [allKnownMembers, settings.escalationContactId]);
+
   // Live Dashboard Metrics + Health Score
   const metrics = useMemo(() => computeDashboardMetrics(cards, settings), [cards, settings]);
+
+  const escalatedPendingCards = useMemo(() => {
+    return cards.filter((c) => {
+      if (c.data.handoff?.status !== 'pending') return false;
+      const createdTs = c.data.handoff.createdAt ? new Date(c.data.handoff.createdAt).getTime() : nowMs;
+      const hours = !Number.isNaN(createdTs) ? Math.max(0, (nowMs - createdTs) / (1000 * 60 * 60)) : 0;
+      return hours >= settings.escalationThresholdHours;
+    });
+  }, [cards, settings.escalationThresholdHours, nowMs]);
+
+  const unacknowledgedEscalations = useMemo(
+    () => escalatedPendingCards.filter((c) => !c.data.handoff?.escalationAcknowledgedAt),
+    [escalatedPendingCards]
+  );
+
+  const myPendingCount = useMemo(() => {
+    if (!currentMember) return 0;
+    return cards.filter(
+      (c) => c.data.handoff?.status === 'pending' && c.data.handoff.toMember.id === currentMember.id
+    ).length;
+  }, [cards, currentMember]);
+
+  const totalHistoryCount = useMemo(() => {
+    let total = 0;
+    for (const c of cards) {
+      total += c.data.history?.length || 0;
+    }
+    return total;
+  }, [cards]);
 
   // Live AI Summary bullets
   const aiBullets = useMemo(
@@ -237,6 +338,9 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
       if (selectedStatus !== 'all') {
         if (selectedStatus === 'Needs Owner') {
           if (card.data.owner || isCardCompleted(card)) return false;
+        } else if (selectedStatus === 'Escalated') {
+          const ho = getCardHandoffDisplay(card, settings.escalationThresholdHours, escalationContact?.fullName, nowMs);
+          if (ho.state !== 'escalated') return false;
         } else {
           const liveStatus = getCardLifecycleStatus(card);
           if (liveStatus.toLowerCase() !== selectedStatus.toLowerCase()) return false;
@@ -271,6 +375,9 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
     selectedPriority,
     selectedDeadline,
     search,
+    settings.escalationThresholdHours,
+    escalationContact,
+    nowMs,
   ]);
 
   // Sorted Cards
@@ -336,7 +443,81 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
     setSelectedDeadline('all');
     setOnlyPendingHandoffs(false);
     setOnlyPendingTasks(false);
+    setPendingScope('all');
     setSearch('');
+  };
+
+  const handleInlineAcceptHandoff = async (card: BoardCardSummary) => {
+    const nextData = buildAcceptHandoffData(card.data, currentMember);
+    if (!nextData) return;
+    await context.setCardData(nextData, card.id);
+    context.notify?.(`Handoff accepted for "${card.name}". Primary ownership transferred.`);
+    await loadData({ silent: true });
+  };
+
+  const handleInlineDeclineHandoff = async (card: BoardCardSummary, reason: string) => {
+    const nextData = buildDeclineHandoffData(card.data, reason, currentMember);
+    if (!nextData) return;
+    await context.setCardData(nextData, card.id);
+    context.notify?.(`Handoff declined for "${card.name}". Ownership stays with ${card.data.handoff?.fromMember.fullName}.`);
+    await loadData({ silent: true });
+  };
+
+  const handleInlineCancelHandoff = async (card: BoardCardSummary) => {
+    const nextData = buildCancelHandoffData(card.data, currentMember);
+    if (!nextData) return;
+    await context.setCardData(nextData, card.id);
+    context.notify?.(`Pending handoff cancelled for "${card.name}".`);
+    await loadData({ silent: true });
+  };
+
+  const handleInlineNotifyEscalation = async (card: BoardCardSummary) => {
+    const { nextData, didChange } = buildEscalationData(
+      card.data,
+      settings.escalationThresholdHours,
+      escalationContact,
+      currentMember,
+      { forceRenotify: true }
+    );
+    if (!didChange) return;
+    await context.setCardData(nextData, card.id);
+    context.notify?.(
+      escalationContact
+        ? `Escalation alert sent to ${escalationContact.fullName} for "${card.name}"`
+        : `Escalation flagged for "${card.name}"`
+    );
+    await loadData({ silent: true });
+  };
+
+  const handleInlineAcknowledgeEscalation = async (card: BoardCardSummary) => {
+    const { nextData, didChange } = buildEscalationData(
+      card.data,
+      settings.escalationThresholdHours,
+      escalationContact,
+      currentMember,
+      { acknowledge: true }
+    );
+    if (!didChange) return;
+    await context.setCardData(nextData, card.id);
+    context.notify?.(`Escalation alert acknowledged for "${card.name}".`);
+    await loadData({ silent: true });
+  };
+
+  const handleAcknowledgeAllEscalations = async () => {
+    for (const card of unacknowledgedEscalations) {
+      const { nextData, didChange } = buildEscalationData(
+        card.data,
+        settings.escalationThresholdHours,
+        escalationContact,
+        currentMember,
+        { acknowledge: true }
+      );
+      if (didChange) {
+        await context.setCardData(nextData, card.id);
+      }
+    }
+    context.notify?.('Escalation alerts acknowledged. Owners remain accountable until handoffs are accepted.');
+    await loadData({ silent: true });
   };
 
   const handleExportCSV = () => {
@@ -751,11 +932,14 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                 {/* Card 1: Total Tasks */}
                 <button
                   type="button"
-                  onClick={clearAllFilters}
+                  onClick={() => {
+                    clearAllFilters();
+                    setActiveTab('task');
+                  }}
                   style={{
                     textAlign: 'left',
                     backgroundColor: '#EFF6FF',
-                    border: !hasActiveFilters ? '1.5px solid #93C5FD' : '1px solid #DBEAFE',
+                    border: !hasActiveFilters && activeTab === 'task' ? '1.5px solid #93C5FD' : '1px solid #DBEAFE',
                     borderRadius: '12px',
                     padding: '14px 16px',
                     display: 'flex',
@@ -797,6 +981,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                     setOnlyPendingTasks(!onlyPendingTasks);
                     setOnlyPendingHandoffs(false);
                     setSelectedStatus('all');
+                    setActiveTab('task');
                   }}
                   style={{
                     textAlign: 'left',
@@ -843,6 +1028,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                     setSelectedStatus(selectedStatus === 'Overdue' ? 'all' : 'Overdue');
                     setOnlyPendingHandoffs(false);
                     setOnlyPendingTasks(false);
+                    setActiveTab('task');
                   }}
                   style={{
                     textAlign: 'left',
@@ -887,14 +1073,17 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setOnlyPendingHandoffs(!onlyPendingHandoffs);
-                    setOnlyPendingTasks(false);
-                    setSelectedStatus('all');
+                    if (activeTab === 'pending') {
+                      setActiveTab('task');
+                    } else {
+                      setPendingScope('all');
+                      setActiveTab('pending');
+                    }
                   }}
                   style={{
                     textAlign: 'left',
                     backgroundColor: '#FFFBEB',
-                    border: onlyPendingHandoffs ? '2px solid #D97706' : '1px solid #FEF3C7',
+                    border: activeTab === 'pending' || onlyPendingHandoffs ? '2px solid #D97706' : '1px solid #FEF3C7',
                     borderRadius: '12px',
                     padding: '14px 16px',
                     display: 'flex',
@@ -902,7 +1091,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                     gap: '8px',
                     cursor: 'pointer',
                   }}
-                  title="Filter tasks waiting for handoff acceptance"
+                  title="Open Pending Actions View"
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <div
@@ -1076,9 +1265,152 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
               </ul>
             </div>
 
+            {/* 4B. ESCALATION ALERT BANNER (P1 Escalation & Manager Notification) */}
+            {escalatedPendingCards.length > 0 && (() => {
+              const isManager = Boolean(
+                currentMember && escalationContact && currentMember.id === escalationContact.id
+              );
+              return (
+                <div
+                  style={{
+                    backgroundColor: isManager && unacknowledgedEscalations.length > 0 ? '#FEF2F2' : '#FFF7ED',
+                    border: isManager && unacknowledgedEscalations.length > 0
+                      ? '1.5px solid #FCA5A5'
+                      : '1px solid #FED7AA',
+                    borderRadius: '12px',
+                    padding: '12px 16px',
+                    marginBottom: '18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                  }}
+                >
+                  <div style={{ flex: '1 1 360px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                      <span
+                        style={{
+                          backgroundColor: '#DC2626',
+                          color: '#ffffff',
+                          fontSize: '10px',
+                          fontWeight: 800,
+                          padding: '2px 7px',
+                          borderRadius: '6px',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.4px',
+                        }}
+                      >
+                        Escalation {unacknowledgedEscalations.length > 0 ? 'Alert' : 'Monitored'}
+                      </span>
+                      <span style={{ fontSize: '13px', fontWeight: 700, color: '#7F1D1D' }}>
+                        {isManager
+                          ? `Attention ${escalationContact!.fullName}: ${escalatedPendingCards.length} handoff${escalatedPendingCards.length > 1 ? 's' : ''} exceeded ${settings.escalationThresholdHours}h`
+                          : `${escalatedPendingCards.length} handoff${escalatedPendingCards.length > 1 ? 's' : ''} exceeded ${settings.escalationThresholdHours}h threshold`}
+                      </span>
+                      {!isManager && (
+                        <span style={{ fontSize: '12px', color: '#9A3412' }}>
+                          {escalationContact
+                            ? `• Lead alerted: ${escalationContact.fullName}`
+                            : '• No Escalation Lead designated'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                      {escalatedPendingCards.slice(0, 3).map((c) => {
+                        const ho = c.data.handoff!;
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => setInspectedCardId(c.id)}
+                            style={{
+                              backgroundColor: '#ffffff',
+                              border: '1px solid #FECACA',
+                              color: '#991B1B',
+                              borderRadius: '6px',
+                              padding: '3px 8px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {c.name}: {ho.fromMember.fullName} &rarr; {ho.toMember.fullName} (
+                            {formatExactTimeAgo(ho.createdAt, nowMs)})
+                            {ho.escalationAcknowledgedAt ? ' ✓' : ''}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                    {isManager && unacknowledgedEscalations.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleAcknowledgeAllEscalations}
+                        style={{
+                          backgroundColor: '#991B1B',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          padding: '6px 12px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Acknowledge All ({unacknowledgedEscalations.length})
+                      </button>
+                    )}
+
+                    {!escalationContact && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveNav('settings')}
+                        style={{
+                          backgroundColor: '#ffffff',
+                          color: '#9A3412',
+                          border: '1px solid #FDBA74',
+                          borderRadius: '8px',
+                          padding: '6px 11px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Set Escalation Lead
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingScope('escalated');
+                        setActiveTab('pending');
+                      }}
+                      style={{
+                        backgroundColor: '#ffffff',
+                        color: '#991B1B',
+                        border: '1px solid #FCA5A5',
+                        borderRadius: '8px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Review Escalated &rarr;
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* 5. VIEW SWITCHER TABS */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                 <button
                   type="button"
                   onClick={() => setActiveTab('task')}
@@ -1110,6 +1442,67 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
                 <button
                   type="button"
+                  onClick={() => setActiveTab('pending')}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: activeTab === 'pending' ? '#EFF6FF' : 'transparent',
+                    border: activeTab === 'pending' ? '1px solid #BFDBFE' : '1px solid transparent',
+                    borderBottom: activeTab === 'pending' ? '2.5px solid #2563EB' : '1px solid transparent',
+                    borderRadius: '8px',
+                    padding: '6px 14px',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    color: activeTab === 'pending' ? '#2563EB' : '#64748B',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  Pending Actions
+                  <span
+                    style={{
+                      backgroundColor:
+                        metrics.escalatedHandoffs > 0
+                          ? '#FEE2E2'
+                          : metrics.pendingHandoffs > 0
+                            ? '#FEF3C7'
+                            : '#F1F5F9',
+                      color:
+                        metrics.escalatedHandoffs > 0
+                          ? '#B91C1C'
+                          : metrics.pendingHandoffs > 0
+                            ? '#B45309'
+                            : '#64748B',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '1px 6px',
+                      borderRadius: '10px',
+                    }}
+                  >
+                    {metrics.pendingHandoffs}
+                  </span>
+                  {myPendingCount > 0 && (
+                    <span
+                      style={{
+                        backgroundColor: '#2563EB',
+                        color: '#ffffff',
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        padding: '1px 6px',
+                        borderRadius: '10px',
+                      }}
+                    >
+                      You: {myPendingCount}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setActiveTab('member')}
                   style={{
                     display: 'inline-flex',
@@ -1133,6 +1526,44 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                     <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                   </svg>
                   Member View
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('history')}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: activeTab === 'history' ? '#EFF6FF' : 'transparent',
+                    border: activeTab === 'history' ? '1px solid #BFDBFE' : '1px solid transparent',
+                    borderBottom: activeTab === 'history' ? '2.5px solid #2563EB' : '1px solid transparent',
+                    borderRadius: '8px',
+                    padding: '6px 14px',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    color: activeTab === 'history' ? '#2563EB' : '#64748B',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                    <path d="M12 7v5l4 2" />
+                  </svg>
+                  History
+                  <span
+                    style={{
+                      backgroundColor: '#F1F5F9',
+                      color: '#475569',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '1px 6px',
+                      borderRadius: '10px',
+                    }}
+                  >
+                    {totalHistoryCount}
+                  </span>
                 </button>
               </div>
 
@@ -1207,6 +1638,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                       fontWeight: 600,
                       color: '#334155',
                       backgroundColor: '#ffffff',
+                      colorScheme: 'light',
                       border: '1px solid #E2E8F0',
                       borderRadius: '8px',
                       cursor: 'pointer',
@@ -1214,7 +1646,9 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                     }}
                   >
                     <option value="all">All Members</option>
-                    <option value="unassigned">Unassigned Only</option>
+                    {activeTab === 'task' || activeTab === 'member' ? (
+                      <option value="unassigned">Unassigned Only</option>
+                    ) : null}
                     {allKnownMembers.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.fullName}
@@ -1245,135 +1679,149 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                   </svg>
                 </div>
 
-                {/* All Statuses */}
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={selectedStatus}
-                    onChange={(e) => setSelectedStatus(e.target.value)}
-                    style={{
-                      padding: '7px 28px 7px 12px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      color: '#334155',
-                      backgroundColor: '#ffffff',
-                      border: '1px solid #E2E8F0',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      appearance: 'none',
-                    }}
-                  >
-                    <option value="all">All Statuses</option>
-                    <option value="Overdue">Overdue</option>
-                    <option value="In Progress">In Progress</option>
-                    <option value="To Do">To Do</option>
-                    <option value="Done">Done</option>
-                    <option value="Needs Owner">Needs Owner</option>
-                  </select>
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    style={{ position: 'absolute', right: 10, top: 11, color: '#64748B', pointerEvents: 'none' }}
-                  >
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
-                </div>
+                {(activeTab === 'task' || activeTab === 'member') && (
+                  <>
+                    {/* All Statuses */}
+                    <div style={{ position: 'relative' }}>
+                      <select
+                        value={selectedStatus}
+                        onChange={(e) => setSelectedStatus(e.target.value)}
+                        style={{
+                          padding: '7px 28px 7px 12px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          color: '#334155',
+                          backgroundColor: '#ffffff',
+                          colorScheme: 'light',
+                          border: '1px solid #E2E8F0',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          appearance: 'none',
+                        }}
+                      >
+                        <option value="all">All Statuses</option>
+                        <option value="Overdue">Overdue</option>
+                        <option value="In Progress">In Progress</option>
+                        <option value="To Do">To Do</option>
+                        <option value="Done">Done</option>
+                        <option value="Needs Owner">Needs Owner</option>
+                        <option value="Escalated">Escalated Handoff</option>
+                      </select>
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        style={{ position: 'absolute', right: 10, top: 11, color: '#64748B', pointerEvents: 'none' }}
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </div>
 
-                {/* All Priorities */}
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={selectedPriority}
-                    onChange={(e) => setSelectedPriority(e.target.value)}
-                    style={{
-                      padding: '7px 28px 7px 12px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      color: '#334155',
-                      backgroundColor: '#ffffff',
-                      border: '1px solid #E2E8F0',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      appearance: 'none',
-                    }}
-                  >
-                    <option value="all">All Priorities</option>
-                    <option value="High">High</option>
-                    <option value="Medium">Medium</option>
-                    <option value="Low">Low</option>
-                  </select>
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    style={{ position: 'absolute', right: 10, top: 11, color: '#64748B', pointerEvents: 'none' }}
-                  >
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
-                </div>
+                    {/* All Priorities */}
+                    <div style={{ position: 'relative' }}>
+                      <select
+                        value={selectedPriority}
+                        onChange={(e) => setSelectedPriority(e.target.value)}
+                        style={{
+                          padding: '7px 28px 7px 12px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          color: '#334155',
+                          backgroundColor: '#ffffff',
+                          colorScheme: 'light',
+                          border: '1px solid #E2E8F0',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          appearance: 'none',
+                        }}
+                      >
+                        <option value="all">All Priorities</option>
+                        <option value="High">High</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Low">Low</option>
+                      </select>
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        style={{ position: 'absolute', right: 10, top: 11, color: '#64748B', pointerEvents: 'none' }}
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </div>
 
-                {/* All Deadlines (Dynamic Real-Time Buckets) */}
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={selectedDeadline}
-                    onChange={(e) => setSelectedDeadline(e.target.value)}
-                    style={{
-                      padding: '7px 28px 7px 28px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      color: '#334155',
-                      backgroundColor: '#ffffff',
-                      border: '1px solid #E2E8F0',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      appearance: 'none',
-                    }}
-                  >
-                    <option value="all">All Deadlines</option>
-                    <option value="overdue">Overdue</option>
-                    <option value="today">Due Today</option>
-                    <option value="week">Due Next 7 Days</option>
-                    <option value="upcoming">All Upcoming</option>
-                    <option value="none">No Deadline</option>
-                  </select>
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    style={{ position: 'absolute', left: 9, top: 10, color: '#64748B', pointerEvents: 'none' }}
-                  >
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                    <line x1="16" y1="2" x2="16" y2="6" />
-                    <line x1="8" y1="2" x2="8" y2="6" />
-                    <line x1="3" y1="10" x2="21" y2="10" />
-                  </svg>
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    style={{ position: 'absolute', right: 10, top: 11, color: '#64748B', pointerEvents: 'none' }}
-                  >
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
-                </div>
+                    {/* All Deadlines (Dynamic Real-Time Buckets) */}
+                    <div style={{ position: 'relative' }}>
+                      <select
+                        value={selectedDeadline}
+                        onChange={(e) => setSelectedDeadline(e.target.value)}
+                        style={{
+                          padding: '7px 28px 7px 28px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          color: '#334155',
+                          backgroundColor: '#ffffff',
+                          colorScheme: 'light',
+                          border: '1px solid #E2E8F0',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          appearance: 'none',
+                        }}
+                      >
+                        <option value="all">All Deadlines</option>
+                        <option value="overdue">Overdue</option>
+                        <option value="today">Due Today</option>
+                        <option value="week">Due Next 7 Days</option>
+                        <option value="upcoming">All Upcoming</option>
+                        <option value="none">No Deadline</option>
+                      </select>
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        style={{ position: 'absolute', left: 9, top: 10, color: '#64748B', pointerEvents: 'none' }}
+                      >
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
+                      </svg>
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        style={{ position: 'absolute', right: 10, top: 11, color: '#64748B', pointerEvents: 'none' }}
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Search Box */}
               <div style={{ position: 'relative', width: '220px' }}>
                 <input
                   type="text"
-                  placeholder="Search tasks..."
+                  placeholder={
+                    activeTab === 'history'
+                      ? 'Search history events...'
+                      : activeTab === 'pending'
+                        ? 'Search pending handoffs...'
+                        : 'Search tasks...'
+                  }
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   style={{
@@ -1383,6 +1831,8 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                     borderRadius: '8px',
                     border: '1px solid #E2E8F0',
                     backgroundColor: '#ffffff',
+                    color: '#0F172A',
+                    colorScheme: 'light',
                     boxSizing: 'border-box',
                     outline: 'none',
                   }}
@@ -1492,8 +1942,14 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                     {sortedCards.map((card, idx) => {
                       const overdue = isCardOverdue(card);
                       const status = getCardLifecycleStatus(card);
-                      const handoff = getCardHandoffDisplay(card, settings.escalationThresholdHours);
+                      const handoff = getCardHandoffDisplay(
+                        card,
+                        settings.escalationThresholdHours,
+                        escalationContact?.fullName,
+                        nowMs
+                      );
                       const deadlineLabel = formatCardDeadline(card);
+                      const ho = card.data.handoff;
 
                       return (
                         <tr
@@ -1617,41 +2073,51 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
                           {/* Handoff Status */}
                           <td style={{ padding: '12px 16px' }} title={handoff.tooltip}>
-                            {handoff.state === 'escalated' ? (
-                              <span
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  backgroundColor: '#FEF2F2',
-                                  border: '1px solid #FECACA',
-                                  color: '#DC2626',
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  padding: '3px 8px',
-                                  borderRadius: '6px',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                <span>⇄</span> {handoff.label}
-                              </span>
-                            ) : handoff.state === 'pending' ? (
-                              <span
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  backgroundColor: '#FEF3C7',
-                                  color: '#D97706',
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  padding: '3px 8px',
-                                  borderRadius: '6px',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                <span>⇄</span> {handoff.label}
-                              </span>
+                            {handoff.state === 'escalated' && ho ? (
+                              <div>
+                                <span
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    backgroundColor: '#FEF2F2',
+                                    border: '1px solid #FECACA',
+                                    color: '#DC2626',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    padding: '3px 8px',
+                                    borderRadius: '6px',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  <span>🚨</span> Escalated &bull; {handoff.exactAgo}
+                                </span>
+                                <div style={{ fontSize: '10px', color: '#991B1B', fontWeight: 600, marginTop: '3px' }}>
+                                  {ho.fromMember.fullName.split(' ')[0]} &rarr; {ho.toMember.fullName.split(' ')[0]}
+                                </div>
+                              </div>
+                            ) : handoff.state === 'pending' && ho ? (
+                              <div>
+                                <span
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    backgroundColor: '#FEF3C7',
+                                    color: '#B45309',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    padding: '3px 8px',
+                                    borderRadius: '6px',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  <span>⇄</span> Pending &bull; {handoff.exactAgo}
+                                </span>
+                                <div style={{ fontSize: '10px', color: '#64748B', fontWeight: 500, marginTop: '3px' }}>
+                                  {ho.fromMember.fullName.split(' ')[0]} &rarr; {ho.toMember.fullName.split(' ')[0]}
+                                </div>
+                              </div>
                             ) : handoff.state === 'declined' ? (
                               <span
                                 style={{
@@ -1724,6 +2190,35 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                   </tbody>
                 </table>
               </div>
+            ) : activeTab === 'pending' ? (
+              <PendingActionsPanel
+                cards={cards}
+                currentMember={currentMember}
+                escalationContact={escalationContact}
+                escalationThresholdHours={settings.escalationThresholdHours}
+                nowMs={nowMs}
+                search={search}
+                selectedMember={selectedMember}
+                scope={pendingScope}
+                onScopeChange={setPendingScope}
+                onInspectCard={(id) => setInspectedCardId(id)}
+                onAcceptHandoff={handleInlineAcceptHandoff}
+                onDeclineHandoff={handleInlineDeclineHandoff}
+                onCancelHandoff={handleInlineCancelHandoff}
+                onNotifyEscalation={handleInlineNotifyEscalation}
+                onAcknowledgeEscalation={handleInlineAcknowledgeEscalation}
+                onOpenSettings={() => setActiveNav('settings')}
+              />
+            ) : activeTab === 'history' ? (
+              <HistoryFeedPanel
+                cards={cards}
+                members={allKnownMembers}
+                nowMs={nowMs}
+                search={search}
+                selectedMember={selectedMember}
+                boardName={boardInfo.name}
+                onInspectCard={(id) => setInspectedCardId(id)}
+              />
             ) : (
               /* 7. MEMBER VIEW GRID */
               <div
@@ -1976,6 +2471,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
           card={inspectedCard}
           context={context}
           settings={settings}
+          escalationContact={escalationContact}
           onClose={() => setInspectedCardId(null)}
           onUpdated={() => loadData({ silent: true })}
         />

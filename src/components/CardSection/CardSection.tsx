@@ -1,33 +1,47 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type {
   TeamSyncCardData,
   TeamMember,
-  TaskHandoff,
   HistoryEventType,
   ITrelloContext,
 } from '../../types/teamsync';
 import { OwnerSection } from './OwnerSection';
 import { HandoffSection } from './HandoffSection';
-import { DEFAULT_ESCALATION_THRESHOLD_HOURS } from '../../utils/statusUtils';
+import { DEFAULT_ESCALATION_THRESHOLD_HOURS, formatExactTimeAgo } from '../../utils/statusUtils';
+import {
+  buildAcceptHandoffData,
+  buildCancelHandoffData,
+  buildDeclineHandoffData,
+  buildEscalationData,
+  buildRequestHandoffData,
+} from '../../utils/handoffActions';
 
 interface CardSectionProps {
   context: ITrelloContext;
   escalationThresholdHours?: number;
+  escalationContact?: TeamMember | null;
   onDataChange?: (data: TeamSyncCardData) => void;
 }
 
-const HISTORY_BADGE_COLORS: Record<HistoryEventType, { dot: string; label: string }> = {
-  owner_assigned: { dot: '#2563EB', label: 'Owner' },
-  owner_removed: { dot: '#DC2626', label: 'Unassigned' },
-  handoff_requested: { dot: '#D97706', label: 'Handoff' },
-  handoff_accepted: { dot: '#059669', label: 'Accepted' },
-  handoff_declined: { dot: '#DC2626', label: 'Declined' },
-  handoff_cancelled: { dot: '#64748B', label: 'Cancelled' },
+type HistoryFilter = 'all' | 'ownership' | 'handoffs' | 'escalations';
+
+const HISTORY_BADGE_COLORS: Record<
+  HistoryEventType,
+  { dot: string; bg: string; text: string; label: string }
+> = {
+  owner_assigned: { dot: '#2563EB', bg: '#EFF6FF', text: '#1D4ED8', label: 'Owner' },
+  owner_removed: { dot: '#DC2626', bg: '#FEE2E2', text: '#B91C1C', label: 'Unassigned' },
+  handoff_requested: { dot: '#D97706', bg: '#FEF3C7', text: '#B45309', label: 'Handoff' },
+  handoff_accepted: { dot: '#059669', bg: '#DCFCE7', text: '#047857', label: 'Accepted' },
+  handoff_declined: { dot: '#DC2626', bg: '#FEE2E2', text: '#B91C1C', label: 'Declined' },
+  handoff_cancelled: { dot: '#64748B', bg: '#F1F5F9', text: '#475569', label: 'Cancelled' },
+  handoff_escalated: { dot: '#B91C1C', bg: '#FEF2F2', text: '#991B1B', label: 'Escalated' },
 };
 
 export const CardSection: React.FC<CardSectionProps> = ({
   context,
   escalationThresholdHours,
+  escalationContact,
   onDataChange,
 }) => {
   const [loading, setLoading] = useState(true);
@@ -41,9 +55,18 @@ export const CardSection: React.FC<CardSectionProps> = ({
   const [loadedThresholdHours, setLoadedThresholdHours] = useState<number>(
     DEFAULT_ESCALATION_THRESHOLD_HOURS
   );
+  const [loadedEscalationContactId, setLoadedEscalationContactId] = useState<string>('');
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
+  const alertedEscalationRef = useRef<Set<string>>(new Set());
 
   const thresholdHours = escalationThresholdHours ?? loadedThresholdHours;
+  const resolvedEscalationContact =
+    escalationContact !== undefined
+      ? escalationContact
+      : loadedEscalationContactId
+        ? members.find((m) => m.id === loadedEscalationContactId) || null
+        : null;
 
   useEffect(() => {
     let active = true;
@@ -55,11 +78,49 @@ export const CardSection: React.FC<CardSectionProps> = ({
     ])
       .then(([cardData, memberList, current, settings]) => {
         if (!active) return;
-        setData(cardData);
+
+        const effectiveThreshold = escalationThresholdHours ?? settings?.escalationThresholdHours ?? DEFAULT_ESCALATION_THRESHOLD_HOURS;
+        const contactId = settings?.escalationContactId || '';
+        const contactMember =
+          escalationContact !== undefined
+            ? escalationContact
+            : contactId
+              ? memberList.find((m) => m.id === contactId) || null
+              : null;
+
+        const { nextData, didChange } = buildEscalationData(
+          cardData,
+          effectiveThreshold,
+          contactMember,
+          null
+        );
+
+        setData(nextData);
         setMembers(memberList);
         setCurrentMember(current);
         if (settings) {
           setLoadedThresholdHours(settings.escalationThresholdHours);
+          setLoadedEscalationContactId(settings.escalationContactId || '');
+        }
+
+        if (didChange) {
+          context.setCardData(nextData).catch((err) => {
+            console.warn('Could not persist automatic escalation metadata', err);
+          });
+        }
+
+        if (
+          nextData.handoff?.status === 'pending' &&
+          nextData.handoff.escalatedAt &&
+          !nextData.handoff.escalationAcknowledgedAt &&
+          contactMember &&
+          current?.id === contactMember.id &&
+          !alertedEscalationRef.current.has(nextData.handoff.id)
+        ) {
+          alertedEscalationRef.current.add(nextData.handoff.id);
+          context.notify?.(
+            `Escalation Alert: Handoff from ${nextData.handoff.fromMember.fullName} to ${nextData.handoff.toMember.fullName} exceeded ${effectiveThreshold}h`
+          );
         }
       })
       .catch((e) => {
@@ -74,7 +135,7 @@ export const CardSection: React.FC<CardSectionProps> = ({
     return () => {
       active = false;
     };
-  }, [context]);
+  }, [context, escalationThresholdHours, escalationContact]);
 
   const updateCardData = async (newData: TeamSyncCardData) => {
     setData(newData);
@@ -167,43 +228,8 @@ export const CardSection: React.FC<CardSectionProps> = ({
   // P0: Request Task Handoff
   // Guardrail: Owner remains unchanged until recipient explicitly accepts!
   const handleRequestHandoff = async (toMember: TeamMember, note: string) => {
-    if (!data.owner) return;
-    const actor = currentMember || data.owner;
-    const now = new Date().toISOString();
-
-    const handoff: TaskHandoff = {
-      id: `ho_${Date.now()}`,
-      fromMember: {
-        id: data.owner.id,
-        fullName: data.owner.fullName,
-        username: data.owner.username,
-        avatarUrl: data.owner.avatarUrl,
-        initials: data.owner.initials,
-      },
-      toMember,
-      note,
-      createdAt: now,
-      status: 'pending',
-    };
-
-    const newHistory = [
-      {
-        id: `hist_${Date.now()}`,
-        type: 'handoff_requested' as const,
-        actor: { id: actor.id, fullName: actor.fullName },
-        timestamp: now,
-        summary: `${actor.fullName} requested handoff to ${toMember.fullName}`,
-        note: note || undefined,
-      },
-      ...data.history,
-    ];
-
-    const newData: TeamSyncCardData = {
-      ...data,
-      handoff,
-      handoffLabel: 'Pending',
-      history: newHistory,
-    };
+    const newData = buildRequestHandoffData(data, toMember, note, currentMember);
+    if (!newData) return;
 
     await updateCardData(newData);
     context.notify?.(`Handoff requested to ${toMember.fullName}`);
@@ -212,37 +238,8 @@ export const CardSection: React.FC<CardSectionProps> = ({
   // P0: Recipient Accepts Handoff
   // Ownership updates to recipient, and handoff is cleared
   const handleAcceptHandoff = async () => {
-    if (!data.handoff) return;
-    const recipient = data.handoff.toMember;
-    const sender = data.handoff.fromMember;
-    const now = new Date().toISOString();
-
-    const newHistory = [
-      {
-        id: `hist_${Date.now()}`,
-        type: 'handoff_accepted' as const,
-        actor: { id: recipient.id, fullName: recipient.fullName },
-        timestamp: now,
-        summary: `${recipient.fullName} accepted the handoff and assumed primary ownership`,
-      },
-      ...data.history,
-    ];
-
-    const newData: TeamSyncCardData = {
-      ...data,
-      owner: {
-        id: recipient.id,
-        fullName: recipient.fullName,
-        username: recipient.username,
-        avatarUrl: recipient.avatarUrl,
-        initials: recipient.initials,
-        assignedAt: now,
-        assignedBy: { id: sender.id, fullName: sender.fullName },
-      },
-      handoff: null,
-      handoffLabel: 'In Progress',
-      history: newHistory,
-    };
+    const newData = buildAcceptHandoffData(data, currentMember);
+    if (!newData) return;
 
     await updateCardData(newData);
     context.notify?.('Handoff accepted. Primary ownership transferred.');
@@ -251,33 +248,8 @@ export const CardSection: React.FC<CardSectionProps> = ({
   // P0: Recipient Declines Handoff
   // Ownership stays with current owner; decline reason recorded in history
   const handleDeclineHandoff = async (reason: string) => {
-    if (!data.handoff) return;
-    const recipient = currentMember || data.handoff.toMember;
-    const now = new Date().toISOString();
-
-    const newHistory = [
-      {
-        id: `hist_${Date.now()}`,
-        type: 'handoff_declined' as const,
-        actor: { id: recipient.id, fullName: recipient.fullName },
-        timestamp: now,
-        summary: `${recipient.fullName} declined handoff from ${data.handoff.fromMember.fullName}`,
-        note: reason,
-      },
-      ...data.history,
-    ];
-
-    const newData: TeamSyncCardData = {
-      ...data,
-      handoff: {
-        ...data.handoff,
-        status: 'declined',
-        resolvedAt: now,
-        declineReason: reason,
-      },
-      handoffLabel: 'Not started',
-      history: newHistory,
-    };
+    const newData = buildDeclineHandoffData(data, reason, currentMember);
+    if (!newData) return;
 
     await updateCardData(newData);
     context.notify?.('Handoff declined and returned to sender.');
@@ -285,30 +257,44 @@ export const CardSection: React.FC<CardSectionProps> = ({
 
   // P0: Sender Cancels Pending Handoff
   const handleCancelHandoff = async () => {
-    if (!data.handoff) return;
-    const actor = currentMember || { id: 'unknown', fullName: 'User' };
-    const now = new Date().toISOString();
-
-    const newHistory = [
-      {
-        id: `hist_${Date.now()}`,
-        type: 'handoff_cancelled' as const,
-        actor: { id: actor.id, fullName: actor.fullName },
-        timestamp: now,
-        summary: `${actor.fullName} cancelled the pending handoff`,
-      },
-      ...data.history,
-    ];
-
-    const newData: TeamSyncCardData = {
-      ...data,
-      handoff: null,
-      handoffLabel: 'Not started',
-      history: newHistory,
-    };
+    const newData = buildCancelHandoffData(data, currentMember);
+    if (!newData) return;
 
     await updateCardData(newData);
     context.notify?.('Pending handoff cancelled.');
+  };
+
+  // P1: Escalation — Notify Lead & Acknowledge
+  const handleNotifyEscalation = async () => {
+    const { nextData, didChange } = buildEscalationData(
+      data,
+      thresholdHours,
+      resolvedEscalationContact,
+      currentMember,
+      { forceRenotify: true }
+    );
+    if (!didChange) return;
+
+    await updateCardData(nextData);
+    context.notify?.(
+      resolvedEscalationContact
+        ? `Escalation alert sent to ${resolvedEscalationContact.fullName}`
+        : 'Escalation flagged in Responsibility History'
+    );
+  };
+
+  const handleAcknowledgeEscalation = async () => {
+    const { nextData, didChange } = buildEscalationData(
+      data,
+      thresholdHours,
+      resolvedEscalationContact,
+      currentMember,
+      { acknowledge: true }
+    );
+    if (!didChange) return;
+
+    await updateCardData(nextData);
+    context.notify?.('Escalation acknowledged. Primary ownership stays with sender until accepted.');
   };
 
   if (loading) {
@@ -319,7 +305,26 @@ export const CardSection: React.FC<CardSectionProps> = ({
     );
   }
 
-  const visibleHistory = showAllHistory ? data.history : data.history.slice(0, 4);
+  const filteredHistory = data.history.filter((item) => {
+    if (historyFilter === 'all') return true;
+    if (historyFilter === 'ownership') {
+      return item.type === 'owner_assigned' || item.type === 'owner_removed';
+    }
+    if (historyFilter === 'handoffs') {
+      return (
+        item.type === 'handoff_requested' ||
+        item.type === 'handoff_accepted' ||
+        item.type === 'handoff_declined' ||
+        item.type === 'handoff_cancelled'
+      );
+    }
+    if (historyFilter === 'escalations') {
+      return item.type === 'handoff_escalated';
+    }
+    return true;
+  });
+
+  const visibleHistory = showAllHistory ? filteredHistory : filteredHistory.slice(0, 4);
 
   return (
     <div className="teamsync-card-section" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
@@ -339,10 +344,13 @@ export const CardSection: React.FC<CardSectionProps> = ({
         members={members}
         currentMember={currentMember}
         escalationThresholdHours={thresholdHours}
+        escalationContact={resolvedEscalationContact}
         onRequestHandoff={handleRequestHandoff}
         onAcceptHandoff={handleAcceptHandoff}
         onDeclineHandoff={handleDeclineHandoff}
         onCancelHandoff={handleCancelHandoff}
+        onNotifyEscalation={handleNotifyEscalation}
+        onAcknowledgeEscalation={handleAcknowledgeEscalation}
       />
 
       {/* 3. Feature 4 (P1): Responsibility History Audit Log */}
@@ -355,7 +363,7 @@ export const CardSection: React.FC<CardSectionProps> = ({
           boxShadow: '0 1px 2px rgba(9, 30, 66, 0.06)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: data.history.length > 0 ? '10px' : '4px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: data.history.length > 0 ? '8px' : '4px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div style={{ width: '6px', height: '14px', backgroundColor: '#64748B', borderRadius: '2px' }} />
             <span style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 700, color: '#5E6C84', letterSpacing: '0.4px' }}>
@@ -363,7 +371,7 @@ export const CardSection: React.FC<CardSectionProps> = ({
             </span>
           </div>
 
-          {data.history.length > 4 && (
+          {filteredHistory.length > 4 && (
             <button
               type="button"
               onClick={() => {
@@ -380,19 +388,63 @@ export const CardSection: React.FC<CardSectionProps> = ({
                 padding: '2px 4px',
               }}
             >
-              {showAllHistory ? 'Show recent' : `Show all (${data.history.length})`}
+              {showAllHistory ? 'Show recent' : `Show all (${filteredHistory.length})`}
             </button>
           )}
         </div>
 
-        {data.history.length === 0 ? (
+        {data.history.length > 2 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '10px' }}>
+            {(
+              [
+                { id: 'all', label: 'All' },
+                { id: 'ownership', label: 'Ownership' },
+                { id: 'handoffs', label: 'Handoffs' },
+                { id: 'escalations', label: 'Escalations' },
+              ] as const
+            ).map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setHistoryFilter(f.id)}
+                style={{
+                  backgroundColor: historyFilter === f.id ? '#EFF6FF' : '#F8FAFC',
+                  color: historyFilter === f.id ? '#2563EB' : '#64748B',
+                  border: historyFilter === f.id ? '1px solid #BFDBFE' : '1px solid #E2E8F0',
+                  borderRadius: '10px',
+                  padding: '2px 8px',
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {visibleHistory.length === 0 ? (
           <div style={{ fontSize: '12px', color: '#64748B', fontStyle: 'italic' }}>
-            No ownership or handoff events recorded yet.
+            {data.history.length === 0
+              ? 'No ownership or handoff events recorded yet.'
+              : 'No events match this filter.'}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {visibleHistory.map((item) => {
-              const badge = HISTORY_BADGE_COLORS[item.type] || { dot: '#64748B', label: 'Event' };
+              const badge = HISTORY_BADGE_COLORS[item.type] || {
+                dot: '#64748B',
+                bg: '#F1F5F9',
+                text: '#475569',
+                label: 'Event',
+              };
+              const fullTs = new Date(item.timestamp).toLocaleString([], {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              });
               return (
                 <div
                   key={item.id}
@@ -401,7 +453,7 @@ export const CardSection: React.FC<CardSectionProps> = ({
                     alignItems: 'flex-start',
                     gap: '8px',
                     fontSize: '12px',
-                    paddingBottom: '6px',
+                    paddingBottom: '7px',
                     borderBottom: '1px solid #F1F5F9',
                   }}
                 >
@@ -416,6 +468,26 @@ export const CardSection: React.FC<CardSectionProps> = ({
                     }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '2px' }}>
+                      <span
+                        style={{
+                          backgroundColor: badge.bg,
+                          color: badge.text,
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          padding: '1px 6px',
+                          borderRadius: '4px',
+                        }}
+                      >
+                        {badge.label}
+                      </span>
+                      <span
+                        title={new Date(item.timestamp).toLocaleString()}
+                        style={{ fontSize: '10px', color: '#64748B', fontWeight: 500 }}
+                      >
+                        {formatExactTimeAgo(item.timestamp)} &bull; {fullTs}
+                      </span>
+                    </div>
                     <div style={{ color: '#0F172A', fontWeight: 500, lineHeight: 1.35 }}>
                       {item.summary}
                     </div>
@@ -424,14 +496,6 @@ export const CardSection: React.FC<CardSectionProps> = ({
                         &ldquo;{item.note}&rdquo;
                       </div>
                     )}
-                    <div style={{ fontSize: '10px', color: '#94A3B8', marginTop: '2px' }}>
-                      {new Date(item.timestamp).toLocaleString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </div>
                   </div>
                 </div>
               );

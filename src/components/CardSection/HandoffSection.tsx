@@ -17,10 +17,13 @@ interface HandoffSectionProps {
   members: TeamMember[];
   currentMember: TeamMember | null;
   escalationThresholdHours?: number;
+  escalationContact?: TeamMember | null;
   onRequestHandoff: (toMember: TeamMember, note: string) => Promise<void>;
   onAcceptHandoff: () => Promise<void>;
   onDeclineHandoff: (reason: string) => Promise<void>;
   onCancelHandoff: () => Promise<void>;
+  onNotifyEscalation?: () => Promise<void>;
+  onAcknowledgeEscalation?: () => Promise<void>;
 }
 
 export const HandoffSection: React.FC<HandoffSectionProps> = ({
@@ -29,10 +32,13 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
   members,
   currentMember,
   escalationThresholdHours = DEFAULT_ESCALATION_THRESHOLD_HOURS,
+  escalationContact = null,
   onRequestHandoff,
   onAcceptHandoff,
   onDeclineHandoff,
   onCancelHandoff,
+  onNotifyEscalation,
+  onAcknowledgeEscalation,
 }) => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedRecipientId, setSelectedRecipientId] = useState('');
@@ -151,21 +157,126 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
             padding: '12px',
           }}
         >
-          {isEscalated && (
+          {isEscalated && handoff && (
             <div
               style={{
                 backgroundColor: '#FEE2E2',
                 border: '1px solid #FCA5A5',
                 color: '#991B1B',
-                borderRadius: '4px',
-                padding: '6px 10px',
+                borderRadius: '6px',
+                padding: '8px 10px',
                 fontSize: '11px',
-                fontWeight: 600,
                 marginBottom: '10px',
               }}
             >
-              Escalation threshold ({escalationThresholdHours}h) exceeded &mdash; primary ownership remains with{' '}
-              <strong>{handoff.fromMember.fullName}</strong> until accepted.
+              <div style={{ fontWeight: 700, lineHeight: 1.4 }}>
+                Escalation threshold ({escalationThresholdHours}h) exceeded &mdash; primary ownership remains with{' '}
+                <strong>{handoff.fromMember.fullName}</strong> until accepted.
+              </div>
+
+              <div
+                style={{
+                  marginTop: '6px',
+                  paddingTop: '6px',
+                  borderTop: '1px solid #FECACA',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '6px',
+                }}
+              >
+                <div style={{ fontSize: '11px', color: '#7F1D1D' }}>
+                  {escalationContact || handoff.escalationNotifiedTo ? (
+                    <>
+                      <span>
+                        Escalation Lead:{' '}
+                        <strong>{escalationContact?.fullName || handoff.escalationNotifiedTo?.fullName}</strong>
+                      </span>
+                      {handoff.escalationAcknowledgedAt ? (
+                        <span
+                          style={{
+                            marginLeft: '6px',
+                            backgroundColor: '#DCFCE7',
+                            color: '#166534',
+                            padding: '1px 6px',
+                            borderRadius: '4px',
+                            fontWeight: 700,
+                            fontSize: '10px',
+                          }}
+                        >
+                          Acknowledged {formatExactTimeAgo(handoff.escalationAcknowledgedAt, nowMs)}
+                        </span>
+                      ) : handoff.escalationNotifiedAt ? (
+                        <span style={{ marginLeft: '6px', color: '#991B1B', fontWeight: 600 }}>
+                          (Alerted {formatExactTimeAgo(handoff.escalationNotifiedAt, nowMs)})
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span>No Escalation Lead configured in Settings &mdash; flagged on board badges.</span>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {onAcknowledgeEscalation &&
+                    currentMember &&
+                    (escalationContact?.id || handoff.escalationNotifiedTo?.id) === currentMember.id &&
+                    !handoff.escalationAcknowledgedAt && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={async () => {
+                          setSubmitting(true);
+                          try {
+                            await onAcknowledgeEscalation();
+                          } finally {
+                            setSubmitting(false);
+                          }
+                        }}
+                        style={{
+                          backgroundColor: '#991B1B',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '4px',
+                          padding: '3px 8px',
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Acknowledge Alert
+                      </button>
+                    )}
+
+                  {onNotifyEscalation && !handoff.escalationAcknowledgedAt && (
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={async () => {
+                        setSubmitting(true);
+                        try {
+                          await onNotifyEscalation();
+                        } finally {
+                          setSubmitting(false);
+                        }
+                      }}
+                      style={{
+                        backgroundColor: '#ffffff',
+                        color: '#991B1B',
+                        border: '1px solid #FCA5A5',
+                        borderRadius: '4px',
+                        padding: '3px 8px',
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {handoff.escalationNotifiedAt ? 'Re-alert Lead' : 'Notify Lead'}
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 

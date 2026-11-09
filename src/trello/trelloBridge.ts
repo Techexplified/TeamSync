@@ -533,12 +533,12 @@ export function initTrelloConnector() {
         t.get('board', 'shared', 'teamsync_settings').catch(() => undefined),
       ]);
 
-      const thresholdHours =
-        settingsRaw && typeof settingsRaw === 'object' && 'escalationThresholdHours' in settingsRaw
-          ? Number((settingsRaw as TeamSyncSettings).escalationThresholdHours) || 24
-          : 24;
+      const settingsObj =
+        settingsRaw && typeof settingsRaw === 'object' ? (settingsRaw as Partial<TeamSyncSettings>) : {};
+      const thresholdHours = Number(settingsObj.escalationThresholdHours) || 24;
+      const contactId = settingsObj.escalationContactId || '';
 
-      const badges = [];
+      const badges: Array<{ title: string; text: string; color: string }> = [];
 
       if (!data?.owner) {
         badges.push({
@@ -566,6 +566,22 @@ export function initTrelloConnector() {
             : `Pending (${data.handoff.toMember.fullName})`,
           color: escalated ? 'red' : 'yellow',
         });
+
+        if (escalated && (contactId || data.handoff.escalationNotifiedTo?.fullName)) {
+          try {
+            const board = contactId ? await t.board('members') : null;
+            const contact = board?.members?.find((m) => m.id === contactId);
+            const managerName =
+              contact?.fullName || data.handoff.escalationNotifiedTo?.fullName || 'Escalation Lead';
+            badges.push({
+              title: 'Escalation Lead Alerted',
+              text: managerName,
+              color: 'red',
+            });
+          } catch {
+            // Safe ignore if board members unavailable
+          }
+        }
       }
 
       return badges;

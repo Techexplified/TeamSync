@@ -36,6 +36,17 @@ export interface TaskHandoff {
   resolvedAt?: string;
   declineReason?: string;
   reminderSentAt?: string;
+  escalatedAt?: string;
+  escalationNotifiedAt?: string;
+  escalationNotifiedTo?: {
+    id: string;
+    fullName: string;
+  };
+  escalationAcknowledgedAt?: string;
+  escalationAcknowledgedBy?: {
+    id: string;
+    fullName: string;
+  };
 }
 
 export type HistoryEventType =
@@ -44,7 +55,8 @@ export type HistoryEventType =
   | 'handoff_requested'
   | 'handoff_accepted'
   | 'handoff_declined'
-  | 'handoff_cancelled';
+  | 'handoff_cancelled'
+  | 'handoff_escalated';
 
 export interface ResponsibilityHistoryItem {
   id: string;
@@ -56,6 +68,12 @@ export interface ResponsibilityHistoryItem {
   timestamp: string; // ISO date string
   summary: string;
   note?: string;
+  meta?: {
+    fromMemberName?: string;
+    toMemberName?: string;
+    escalationContactName?: string;
+    responseMs?: number;
+  };
 }
 
 /**
