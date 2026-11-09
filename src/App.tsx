@@ -359,10 +359,13 @@ export function App() {
             type="button"
             onClick={() => setShowAddTaskBar(false)}
             style={{
-              background: 'none',
-              color: '#94A3B8',
+              backgroundColor: '#DC2626',
+              color: '#ffffff',
               border: 'none',
+              borderRadius: '6px',
+              padding: '6px 12px',
               fontSize: '12px',
+              fontWeight: 600,
               cursor: 'pointer',
             }}
           >

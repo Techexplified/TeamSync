@@ -103,7 +103,7 @@ export const OwnerSection: React.FC<OwnerSectionProps> = ({
             }}
           />
           <span style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 700, color: '#5E6C84', letterSpacing: '0.4px' }}>
-            Primary Task Owner (P0)
+            Primary Task Owner
           </span>
         </div>
         <Badge status={owner ? 'active' : 'needs_owner'} label={owner ? 'Owner Assigned' : 'Needs Owner'} />

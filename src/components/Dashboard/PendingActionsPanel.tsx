@@ -566,13 +566,13 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
                             disabled={isBusy}
                             onClick={() => runAction(card.id, () => onCancelHandoff(card))}
                             style={{
-                              backgroundColor: '#ffffff',
-                              color: '#475569',
-                              border: '1px solid #CBD5E1',
+                              backgroundColor: '#DC2626',
+                              color: '#ffffff',
+                              border: 'none',
                               borderRadius: '6px',
                               padding: '5px 9px',
                               fontSize: '11px',
-                              fontWeight: 600,
+                              fontWeight: 700,
                               cursor: 'pointer',
                             }}
                           >

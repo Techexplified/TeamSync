@@ -138,7 +138,8 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
             }}
           />
           <span style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 700, color: '#5E6C84', letterSpacing: '0.4px' }}>
-            Structured Handoff
+            {/* Structured */}
+            Handoff
           </span>
         </div>
 
@@ -440,12 +441,13 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
                 disabled={submitting}
                 onClick={handleCancel}
                 style={{
-                  backgroundColor: 'transparent',
-                  color: '#6B778C',
-                  border: '1px solid #C1C7D0',
+                  backgroundColor: '#DC2626',
+                  color: '#ffffff',
+                  border: 'none',
                   borderRadius: '4px',
-                  padding: '4px 8px',
+                  padding: '5px 10px',
                   fontSize: '11px',
+                  fontWeight: 600,
                   cursor: 'pointer',
                 }}
               >
@@ -645,10 +647,13 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
               type="button"
               onClick={() => setIsFormOpen(false)}
               style={{
-                backgroundColor: 'transparent',
-                color: '#5E6C84',
+                backgroundColor: '#DC2626',
+                color: '#ffffff',
                 border: 'none',
+                borderRadius: '4px',
+                padding: '6px 12px',
                 fontSize: '12px',
+                fontWeight: 600,
                 cursor: 'pointer',
               }}
             >
