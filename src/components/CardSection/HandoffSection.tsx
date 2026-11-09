@@ -9,13 +9,14 @@ import {
   SendIcon,
   ClockIcon,
 } from '../common/Icons';
-import { formatHoursPending, getHoursPending } from '../../utils/statusUtils';
+import { formatHoursPending, getHoursPending, DEFAULT_ESCALATION_THRESHOLD_HOURS } from '../../utils/statusUtils';
 
 interface HandoffSectionProps {
   handoff: TaskHandoff | null;
   owner: TaskOwner | null;
   members: TeamMember[];
   currentMember: TeamMember | null;
+  escalationThresholdHours?: number;
   onRequestHandoff: (toMember: TeamMember, note: string) => Promise<void>;
   onAcceptHandoff: () => Promise<void>;
   onDeclineHandoff: (reason: string) => Promise<void>;
@@ -27,6 +28,7 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
   owner,
   members,
   currentMember,
+  escalationThresholdHours = DEFAULT_ESCALATION_THRESHOLD_HOURS,
   onRequestHandoff,
   onAcceptHandoff,
   onDeclineHandoff,
@@ -41,6 +43,8 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
 
   const isPending = handoff?.status === 'pending';
   const isDeclined = handoff?.status === 'declined';
+  const hoursPending = isPending && handoff ? getHoursPending(handoff.createdAt) : 0;
+  const isEscalated = isPending && hoursPending >= escalationThresholdHours;
   const isRecipient = handoff && currentMember && handoff.toMember.id === currentMember.id;
   const isSender = handoff && currentMember && handoff.fromMember.id === currentMember.id;
 
@@ -109,16 +113,17 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
             style={{
               width: '6px',
               height: '16px',
-              backgroundColor: isPending ? '#FFAB00' : isDeclined ? '#BF2600' : '#4C9AFF',
+              backgroundColor: isEscalated ? '#DE350B' : isPending ? '#FFAB00' : isDeclined ? '#BF2600' : '#4C9AFF',
               borderRadius: '2px',
             }}
           />
           <span style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 700, color: '#5E6C84', letterSpacing: '0.4px' }}>
-            Structured Handoff (P0)
+            Structured Handoff
           </span>
         </div>
 
-        {isPending && <Badge status="handoff_pending" label="Pending Response" />}
+        {isEscalated && <Badge status="needs_attention" label={`Escalated (>${escalationThresholdHours}h)`} />}
+        {isPending && !isEscalated && <Badge status="handoff_pending" label="Pending Response" />}
         {isDeclined && <Badge status="needs_owner" label="Handoff Declined" />}
       </div>
 
@@ -126,23 +131,41 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
       {isPending && handoff && (
         <div
           style={{
-            backgroundColor: '#FFFAE6',
-            border: '1px solid #FFE380',
+            backgroundColor: isEscalated ? '#FFF5F5' : '#FFFAE6',
+            border: isEscalated ? '1px solid #FCA5A5' : '1px solid #FFE380',
             borderRadius: '6px',
             padding: '12px',
           }}
         >
+          {isEscalated && (
+            <div
+              style={{
+                backgroundColor: '#FEE2E2',
+                border: '1px solid #FCA5A5',
+                color: '#991B1B',
+                borderRadius: '4px',
+                padding: '6px 10px',
+                fontSize: '11px',
+                fontWeight: 600,
+                marginBottom: '10px',
+              }}
+            >
+              Escalation threshold ({escalationThresholdHours}h) exceeded &mdash; primary ownership remains with{' '}
+              <strong>{handoff.fromMember.fullName}</strong> until accepted.
+            </div>
+          )}
+
           {/* Transfer visual: Sender -> Recipient */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Avatar member={handoff.fromMember} size="sm" showName />
-              <ArrowRightIcon size={14} style={{ color: '#B76E00' }} />
+              <ArrowRightIcon size={14} style={{ color: isEscalated ? '#DC2626' : '#B76E00' }} />
               <Avatar member={handoff.toMember} size="sm" showName />
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#7A4B00', fontWeight: 600 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: isEscalated ? '#B91C1C' : '#7A4B00', fontWeight: 600 }}>
               <ClockIcon size={12} />
-              {formatHoursPending(getHoursPending(handoff.createdAt))}
+              {formatHoursPending(hoursPending)}
             </div>
           </div>
 

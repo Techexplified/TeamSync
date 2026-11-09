@@ -2,9 +2,14 @@ import type {
   TeamSyncCardData,
   TeamMember,
   BoardCardSummary,
+  BoardInfo,
+  TeamSyncSettings,
+  MockCardUpdatePatch,
+  TaskPriority,
   ITrelloContext,
 } from '../types/teamsync';
 import { MOCK_MEMBERS, INITIAL_MOCK_CARDS } from './mockData';
+import { DEFAULT_SETTINGS, getMemberInitials } from '../utils/statusUtils';
 
 declare global {
   interface Window {
@@ -21,7 +26,7 @@ export interface TrelloIframe {
   card: (...fields: string[]) => Promise<{ id: string; name: string; idMembers?: string[] }>;
   board: (...fields: string[]) => Promise<{
     id: string;
-    name: string;
+    name?: string;
     members?: Array<{ id: string; fullName: string; username: string; avatar?: string }>;
   }>;
   cards: (...fields: string[]) => Promise<
@@ -29,10 +34,18 @@ export interface TrelloIframe {
       id: string;
       name: string;
       idList?: string;
-      pluginData?: Array<{ idPlugin: string; value: string }>;
+      due?: string | null;
+      dueComplete?: boolean;
+      closed?: boolean;
+      url?: string;
+      dateLastActivity?: string;
+      labels?: Array<{ id?: string; name?: string; color?: string }>;
+      members?: Array<{ id: string; fullName: string; username: string; avatar?: string }>;
     }>
   >;
+  lists?: (...fields: string[]) => Promise<Array<{ id: string; name: string }>>;
   member: (...fields: string[]) => Promise<{ id: string; fullName: string; username: string; avatar?: string }>;
+  showCard?: (cardId: string) => Promise<void>;
   sizeTo?: (selector: string | HTMLElement) => void;
   closeModal?: () => void;
   modal?: (options: Record<string, unknown>) => void;
@@ -40,12 +53,74 @@ export interface TrelloIframe {
   signUrl?: (url: string) => string;
 }
 
-const STORAGE_KEY = 'teamsync_v1_cards';
+export const STORAGE_KEY = 'teamsync_v2_cards';
+export const SETTINGS_STORAGE_KEY = 'teamsync_v2_settings';
+const SYNC_CHANNEL_NAME = 'teamsync_realtime_sync';
+
+function formatTrelloAvatar(avatar?: string): string | null {
+  if (!avatar) return null;
+  if (/\.(png|jpg|jpeg|webp|gif)$/i.test(avatar)) return avatar;
+  return `${avatar}/50.png`;
+}
+
+function normalizeCardData(raw: unknown): TeamSyncCardData {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Partial<TeamSyncCardData>;
+  return {
+    owner: obj.owner || null,
+    handoff: obj.handoff || null,
+    history: Array.isArray(obj.history) ? obj.history : [],
+    ...(obj.deadline !== undefined ? { deadline: obj.deadline } : {}),
+    ...(obj.priority !== undefined ? { priority: obj.priority } : {}),
+    ...(obj.trelloStatus !== undefined ? { trelloStatus: obj.trelloStatus } : {}),
+    ...(obj.handoffLabel !== undefined ? { handoffLabel: obj.handoffLabel } : {}),
+  };
+}
+
+export function broadcastTeamSyncChange(reason: string = 'data_updated') {
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const ch = new BroadcastChannel(SYNC_CHANNEL_NAME);
+      ch.postMessage({ type: reason, timestamp: Date.now() });
+      ch.close();
+    }
+  } catch {
+    // BroadcastChannel unavailable in restricted contexts; ignore safely
+  }
+}
+
+export function subscribeToTeamSyncUpdates(callback: () => void): () => void {
+  const handleStorage = (e: StorageEvent) => {
+    if (e.key === STORAGE_KEY || e.key === SETTINGS_STORAGE_KEY) {
+      callback();
+    }
+  };
+  window.addEventListener('storage', handleStorage);
+
+  let channel: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      channel = new BroadcastChannel(SYNC_CHANNEL_NAME);
+      channel.onmessage = () => callback();
+    }
+  } catch {
+    channel = null;
+  }
+
+  return () => {
+    window.removeEventListener('storage', handleStorage);
+    if (channel) {
+      channel.close();
+    }
+  };
+}
 
 export function getMockStoredCards(): BoardCardSummary[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
   } catch (e) {
     console.error('Failed to read from localStorage', e);
   }
@@ -55,13 +130,101 @@ export function getMockStoredCards(): BoardCardSummary[] {
 export function saveMockStoredCards(cards: BoardCardSummary[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
+    broadcastTeamSyncChange('mock_cards_saved');
   } catch (e) {
     console.error('Failed to write to localStorage', e);
   }
 }
 
+export function getMockStoredSettings(): TeamSyncSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (raw) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    }
+  } catch (e) {
+    console.error('Failed to read settings from localStorage', e);
+  }
+  return DEFAULT_SETTINGS;
+}
+
+export function saveMockStoredSettings(settings: TeamSyncSettings) {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    broadcastTeamSyncChange('settings_saved');
+  } catch (e) {
+    console.error('Failed to write settings to localStorage', e);
+  }
+}
+
+export function addMockCard(
+  name: string,
+  options?: { listName?: string; priority?: TaskPriority; due?: string | null; ownerId?: string | null }
+): BoardCardSummary {
+  const cards = getMockStoredCards();
+  const ownerMember = options?.ownerId ? MOCK_MEMBERS.find((m) => m.id === options.ownerId) || null : null;
+  const now = new Date().toISOString();
+
+  const newCard: BoardCardSummary = {
+    id: `card_${Date.now()}`,
+    name: name.trim(),
+    listName: options?.listName || 'To Do',
+    due: options?.due ?? null,
+    dueComplete: options?.listName === 'Done',
+    dateLastActivity: now,
+    labels: options?.priority ? [{ name: options.priority }] : [],
+    data: {
+      priority: options?.priority || 'Medium',
+      trelloStatus: options?.listName === 'Done' ? 'Done' : options?.listName === 'To Do' ? 'To Do' : 'In Progress',
+      handoffLabel: options?.listName === 'Done' ? 'Completed' : 'Not started',
+      owner: ownerMember
+        ? {
+            id: ownerMember.id,
+            fullName: ownerMember.fullName,
+            username: ownerMember.username,
+            avatarUrl: ownerMember.avatarUrl,
+            initials: ownerMember.initials,
+            assignedAt: now,
+            assignedBy: { id: ownerMember.id, fullName: ownerMember.fullName },
+          }
+        : null,
+      handoff: null,
+      history: ownerMember
+        ? [
+            {
+              id: `hist_${Date.now()}`,
+              type: 'owner_assigned',
+              actor: { id: ownerMember.id, fullName: ownerMember.fullName },
+              timestamp: now,
+              summary: `Task created and assigned to ${ownerMember.fullName}`,
+            },
+          ]
+        : [],
+    },
+  };
+
+  saveMockStoredCards([newCard, ...cards]);
+  return newCard;
+}
+
 export function resetMockData() {
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(SETTINGS_STORAGE_KEY);
+  broadcastTeamSyncChange('mock_reset');
+}
+
+/**
+ * Wraps any ITrelloContext to operate against a specific target card ID cleanly.
+ */
+export function createScopedCardContext(
+  baseContext: ITrelloContext,
+  targetCardId: string
+): ITrelloContext {
+  return {
+    ...baseContext,
+    getCardData: () => baseContext.getCardData(targetCardId),
+    setCardData: (newData: TeamSyncCardData) => baseContext.setCardData(newData, targetCardId),
+  };
 }
 
 /**
@@ -69,32 +232,62 @@ export function resetMockData() {
  */
 export function createMockTrelloContext(
   cardId: string,
-  currentMemberId: string = 'mem_rahul',
+  currentMemberId: string = 'mem_andre',
   onUpdate?: () => void
 ): ITrelloContext {
   return {
     isRealTrello: false,
 
-    async getCardData(): Promise<TeamSyncCardData> {
+    async getCardData(targetCardId?: string): Promise<TeamSyncCardData> {
+      const id = targetCardId || cardId;
       const cards = getMockStoredCards();
-      const card = cards.find((c) => c.id === cardId);
-      return (
-        card?.data || {
-          owner: null,
-          handoff: null,
-          history: [],
-        }
-      );
+      const card = cards.find((c) => c.id === id);
+      return normalizeCardData(card?.data);
     },
 
-    async setCardData(newData: TeamSyncCardData): Promise<void> {
+    async setCardData(newData: TeamSyncCardData, targetCardId?: string): Promise<void> {
+      const id = targetCardId || cardId;
       const cards = getMockStoredCards();
-      const index = cards.findIndex((c) => c.id === cardId);
+      const index = cards.findIndex((c) => c.id === id);
+      const now = new Date().toISOString();
       if (index >= 0) {
-        cards[index] = { ...cards[index], data: newData };
+        cards[index] = { ...cards[index], dateLastActivity: now, data: newData };
       } else {
-        cards.push({ id: cardId, name: 'Untitled Card', listName: 'In Progress', data: newData });
+        cards.push({ id, name: 'Untitled Card', listName: 'In Progress', dateLastActivity: now, data: newData });
       }
+      saveMockStoredCards(cards);
+      if (onUpdate) onUpdate();
+    },
+
+    async updateCardMeta(targetCardId: string, patch: MockCardUpdatePatch): Promise<void> {
+      const cards = getMockStoredCards();
+      const index = cards.findIndex((c) => c.id === targetCardId);
+      if (index < 0) return;
+
+      const current = cards[index];
+      const nextList = patch.listName ?? current.listName;
+      const nextDueComplete =
+        patch.dueComplete !== undefined
+          ? patch.dueComplete
+          : patch.trelloStatus === 'Done'
+            ? true
+            : patch.trelloStatus
+              ? false
+              : current.dueComplete;
+
+      cards[index] = {
+        ...current,
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        listName: nextList,
+        ...(patch.due !== undefined ? { due: patch.due } : {}),
+        dueComplete: nextDueComplete,
+        dateLastActivity: new Date().toISOString(),
+        data: {
+          ...current.data,
+          ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+          ...(patch.trelloStatus !== undefined ? { trelloStatus: patch.trelloStatus } : {}),
+        },
+      };
       saveMockStoredCards(cards);
       if (onUpdate) onUpdate();
     },
@@ -109,6 +302,25 @@ export function createMockTrelloContext(
 
     async getBoardCards(): Promise<BoardCardSummary[]> {
       return getMockStoredCards();
+    },
+
+    async getBoardInfo(): Promise<BoardInfo> {
+      return {
+        id: 'board_mock_sprint',
+        name: 'Product Sprint',
+        isConnected: true,
+        memberCount: MOCK_MEMBERS.length,
+        lastSyncedAt: new Date().toISOString(),
+      };
+    },
+
+    async getSettings(): Promise<TeamSyncSettings> {
+      return getMockStoredSettings();
+    },
+
+    async saveSettings(settings: TeamSyncSettings): Promise<void> {
+      saveMockStoredSettings(settings);
+      if (onUpdate) onUpdate();
     },
 
     notify(message: string) {
@@ -129,19 +341,16 @@ export function createRealTrelloContext(): ITrelloContext {
   return {
     isRealTrello: true,
 
-    async getCardData(): Promise<TeamSyncCardData> {
-      const data = (await t.get('card', 'shared', 'teamsync')) as TeamSyncCardData | undefined;
-      return (
-        data || {
-          owner: null,
-          handoff: null,
-          history: [],
-        }
-      );
+    async getCardData(targetCardId?: string): Promise<TeamSyncCardData> {
+      const scope = targetCardId || 'card';
+      const data = await t.get(scope, 'shared', 'teamsync');
+      return normalizeCardData(data);
     },
 
-    async setCardData(newData: TeamSyncCardData): Promise<void> {
-      await t.set('card', 'shared', 'teamsync', newData);
+    async setCardData(newData: TeamSyncCardData, targetCardId?: string): Promise<void> {
+      const scope = targetCardId || 'card';
+      await t.set(scope, 'shared', 'teamsync', newData);
+      broadcastTeamSyncChange('trello_card_updated');
     },
 
     async getMembers(): Promise<TeamMember[]> {
@@ -150,7 +359,8 @@ export function createRealTrelloContext(): ITrelloContext {
         id: m.id,
         fullName: m.fullName,
         username: m.username,
-        avatarUrl: m.avatar ? `${m.avatar}/50.png` : null,
+        initials: getMemberInitials(m.fullName),
+        avatarUrl: formatTrelloAvatar(m.avatar),
       }));
     },
 
@@ -160,31 +370,99 @@ export function createRealTrelloContext(): ITrelloContext {
         id: member.id,
         fullName: member.fullName,
         username: member.username,
-        avatarUrl: member.avatar ? `${member.avatar}/50.png` : null,
+        initials: getMemberInitials(member.fullName),
+        avatarUrl: formatTrelloAvatar(member.avatar),
       };
     },
 
     async getBoardCards(): Promise<BoardCardSummary[]> {
-      const rawCards = await t.cards('id', 'name', 'idList', 'pluginData');
-      return rawCards.map((c) => {
-        let cardData: TeamSyncCardData = { owner: null, handoff: null, history: [] };
-        if (c.pluginData && c.pluginData.length > 0) {
-          const match = c.pluginData.find((p) => p.value);
-          if (match) {
-            try {
-              cardData = JSON.parse(match.value);
-            } catch (e) {
-              console.error('Error parsing card pluginData', e);
-            }
-          }
+      const [rawCards, rawLists] = await Promise.all([
+        t.cards('id', 'name', 'idList', 'due', 'dueComplete', 'members', 'labels', 'closed', 'url', 'dateLastActivity'),
+        t.lists ? t.lists('id', 'name').catch(() => []) : Promise.resolve([]),
+      ]);
+
+      const listMap = new Map<string, string>();
+      for (const l of rawLists) {
+        listMap.set(l.id, l.name);
+      }
+
+      const openCards = rawCards.filter((c) => !c.closed);
+
+      // Fetch TeamSync shared pluginData for every open card in parallel via official SDK scope
+      const cardDataList = await Promise.all(
+        openCards.map((c) =>
+          t
+            .get(c.id, 'shared', 'teamsync')
+            .then((val) => normalizeCardData(val))
+            .catch(() => normalizeCardData(null))
+        )
+      );
+
+      return openCards.map((c, idx) => ({
+        id: c.id,
+        name: c.name,
+        idList: c.idList,
+        listName: (c.idList && listMap.get(c.idList)) || 'Board',
+        due: c.due ?? null,
+        dueComplete: Boolean(c.dueComplete),
+        url: c.url,
+        dateLastActivity: c.dateLastActivity,
+        labels: (c.labels || []).map((lbl) => ({
+          id: lbl.id,
+          name: lbl.name || '',
+          color: lbl.color,
+        })),
+        trelloMembers: (c.members || []).map((m) => ({
+          id: m.id,
+          fullName: m.fullName,
+          username: m.username,
+          initials: getMemberInitials(m.fullName),
+          avatarUrl: formatTrelloAvatar(m.avatar),
+        })),
+        data: cardDataList[idx],
+      }));
+    },
+
+    async getBoardInfo(): Promise<BoardInfo> {
+      const board = await t.board('id', 'name', 'members');
+      return {
+        id: board.id,
+        name: board.name || 'Trello Board',
+        isConnected: true,
+        memberCount: board.members?.length || 0,
+        lastSyncedAt: new Date().toISOString(),
+      };
+    },
+
+    async getSettings(): Promise<TeamSyncSettings> {
+      try {
+        const stored = await t.get('board', 'shared', 'teamsync_settings');
+        if (stored && typeof stored === 'object') {
+          return { ...DEFAULT_SETTINGS, ...(stored as Partial<TeamSyncSettings>) };
         }
-        return {
-          id: c.id,
-          name: c.name,
-          listName: 'Card',
-          data: cardData,
-        };
-      });
+      } catch (e) {
+        console.warn('Could not read board settings, using defaults', e);
+      }
+      return DEFAULT_SETTINGS;
+    },
+
+    async saveSettings(settings: TeamSyncSettings): Promise<void> {
+      await t.set('board', 'shared', 'teamsync_settings', settings);
+      broadcastTeamSyncChange('trello_settings_updated');
+    },
+
+    async openCardInTrello(targetCardId: string): Promise<void> {
+      if (t.showCard) {
+        await t.showCard(targetCardId);
+      }
+    },
+
+    sizeToContent() {
+      try {
+        t.sizeTo?.('#root');
+      } catch {
+        // Non-resizable container (like fixed modal); ignore
+      }
     },
 
     notify(message: string) {
@@ -208,7 +486,15 @@ export function initTrelloConnector() {
 
   window.TrelloPowerUp.initialize({
     'card-badges': async function (t: TrelloIframe) {
-      const data = (await t.get('card', 'shared', 'teamsync')) as TeamSyncCardData | undefined;
+      const [data, settingsRaw] = await Promise.all([
+        t.get('card', 'shared', 'teamsync') as Promise<TeamSyncCardData | undefined>,
+        t.get('board', 'shared', 'teamsync_settings').catch(() => undefined),
+      ]);
+
+      const thresholdHours =
+        settingsRaw && typeof settingsRaw === 'object' && 'escalationThresholdHours' in settingsRaw
+          ? Number((settingsRaw as TeamSyncSettings).escalationThresholdHours) || 24
+          : 24;
 
       if (!data || !data.owner) {
         return [{
@@ -219,6 +505,16 @@ export function initTrelloConnector() {
 
       if (data.handoff?.status === 'pending') {
         const recipientName = data.handoff.toMember ? data.handoff.toMember.fullName.split(' ')[0] : 'Member';
+        const createdMs = data.handoff.createdAt ? new Date(data.handoff.createdAt).getTime() : Date.now();
+        const elapsedHours = (Date.now() - createdMs) / (1000 * 60 * 60);
+
+        if (elapsedHours >= thresholdHours) {
+          return [{
+            text: `🚨 Escalated → ${recipientName}`,
+            color: 'red',
+          }];
+        }
+
         return [{
           text: `⏳ Handoff → ${recipientName}`,
           color: 'yellow',
@@ -232,7 +528,16 @@ export function initTrelloConnector() {
     },
 
     'card-detail-badges': async function (t: TrelloIframe) {
-      const data = (await t.get('card', 'shared', 'teamsync')) as TeamSyncCardData | undefined;
+      const [data, settingsRaw] = await Promise.all([
+        t.get('card', 'shared', 'teamsync') as Promise<TeamSyncCardData | undefined>,
+        t.get('board', 'shared', 'teamsync_settings').catch(() => undefined),
+      ]);
+
+      const thresholdHours =
+        settingsRaw && typeof settingsRaw === 'object' && 'escalationThresholdHours' in settingsRaw
+          ? Number((settingsRaw as TeamSyncSettings).escalationThresholdHours) || 24
+          : 24;
+
       const badges = [];
 
       if (!data?.owner) {
@@ -250,10 +555,16 @@ export function initTrelloConnector() {
       }
 
       if (data?.handoff?.status === 'pending') {
+        const createdMs = data.handoff.createdAt ? new Date(data.handoff.createdAt).getTime() : Date.now();
+        const elapsedHours = (Date.now() - createdMs) / (1000 * 60 * 60);
+        const escalated = elapsedHours >= thresholdHours;
+
         badges.push({
-          title: 'Handoff Status',
-          text: `Pending (${data.handoff.toMember.fullName})`,
-          color: 'yellow',
+          title: escalated ? 'Escalated Handoff' : 'Handoff Status',
+          text: escalated
+            ? `Needs Attention (${data.handoff.toMember.fullName})`
+            : `Pending (${data.handoff.toMember.fullName})`,
+          color: escalated ? 'red' : 'yellow',
         });
       }
 
@@ -269,8 +580,8 @@ export function initTrelloConnector() {
             return tBtn.modal?.({
               url: tBtn.signUrl ? tBtn.signUrl('./index.html?view=card-back') : './index.html?view=card-back',
               title: 'TeamSync Task Ownership',
-              accentColor: '#0052CC',
-              height: 380,
+              accentColor: '#2563EB',
+              height: 440,
             });
           },
         },
@@ -284,7 +595,7 @@ export function initTrelloConnector() {
         content: {
           type: 'iframe',
           url: t.signUrl ? t.signUrl('./index.html?view=card-back') : './index.html?view=card-back',
-          height: 380,
+          height: 420,
         },
       };
     },
@@ -298,7 +609,7 @@ export function initTrelloConnector() {
             return tModal.modal?.({
               url: tModal.signUrl ? tModal.signUrl('./index.html?view=overview') : './index.html?view=overview',
               title: 'TeamSync : Board Overview',
-              accentColor: '#0052CC',
+              accentColor: '#2563EB',
               fullscreen: true,
             });
           },
@@ -307,4 +618,3 @@ export function initTrelloConnector() {
     },
   });
 }
-

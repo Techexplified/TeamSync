@@ -42,8 +42,26 @@ export const BoardOverview: React.FC<BoardOverviewProps> = ({ context, onOpenCar
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    let active = true;
+    Promise.all([
+      context.getBoardCards ? context.getBoardCards() : Promise.resolve([]),
+      context.getMembers(),
+    ])
+      .then(([boardCards, memberList]) => {
+        if (!active) return;
+        setCards(boardCards);
+        setMembers(memberList);
+      })
+      .catch((e) => {
+        console.error('Failed to load board overview data', e);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [context]);
 
   const metrics = calculateBoardHealth(cards);
 

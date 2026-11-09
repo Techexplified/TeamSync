@@ -3,17 +3,33 @@ import type {
   TeamSyncCardData,
   TeamMember,
   TaskHandoff,
+  HistoryEventType,
   ITrelloContext,
 } from '../../types/teamsync';
 import { OwnerSection } from './OwnerSection';
 import { HandoffSection } from './HandoffSection';
+import { DEFAULT_ESCALATION_THRESHOLD_HOURS } from '../../utils/statusUtils';
 
 interface CardSectionProps {
   context: ITrelloContext;
+  escalationThresholdHours?: number;
   onDataChange?: (data: TeamSyncCardData) => void;
 }
 
-export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange }) => {
+const HISTORY_BADGE_COLORS: Record<HistoryEventType, { dot: string; label: string }> = {
+  owner_assigned: { dot: '#2563EB', label: 'Owner' },
+  owner_removed: { dot: '#DC2626', label: 'Unassigned' },
+  handoff_requested: { dot: '#D97706', label: 'Handoff' },
+  handoff_accepted: { dot: '#059669', label: 'Accepted' },
+  handoff_declined: { dot: '#DC2626', label: 'Declined' },
+  handoff_cancelled: { dot: '#64748B', label: 'Cancelled' },
+};
+
+export const CardSection: React.FC<CardSectionProps> = ({
+  context,
+  escalationThresholdHours,
+  onDataChange,
+}) => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<TeamSyncCardData>({
     owner: null,
@@ -22,32 +38,49 @@ export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange 
   });
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [currentMember, setCurrentMember] = useState<TeamMember | null>(null);
+  const [loadedThresholdHours, setLoadedThresholdHours] = useState<number>(
+    DEFAULT_ESCALATION_THRESHOLD_HOURS
+  );
+  const [showAllHistory, setShowAllHistory] = useState(false);
 
-  const loadData = async () => {
-    try {
-      const [cardData, memberList, current] = await Promise.all([
-        context.getCardData(),
-        context.getMembers(),
-        context.getCurrentMember(),
-      ]);
-      setData(cardData);
-      setMembers(memberList);
-      setCurrentMember(current);
-    } catch (e) {
-      console.error('Failed to load card data', e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const thresholdHours = escalationThresholdHours ?? loadedThresholdHours;
 
   useEffect(() => {
-    loadData();
-  }, []);
+    let active = true;
+    Promise.all([
+      context.getCardData(),
+      context.getMembers(),
+      context.getCurrentMember(),
+      context.getSettings ? context.getSettings() : Promise.resolve(null),
+    ])
+      .then(([cardData, memberList, current, settings]) => {
+        if (!active) return;
+        setData(cardData);
+        setMembers(memberList);
+        setCurrentMember(current);
+        if (settings) {
+          setLoadedThresholdHours(settings.escalationThresholdHours);
+        }
+      })
+      .catch((e) => {
+        console.error('Failed to load card data', e);
+      })
+      .finally(() => {
+        if (!active) return;
+        setLoading(false);
+        setTimeout(() => context.sizeToContent?.(), 50);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [context]);
 
   const updateCardData = async (newData: TeamSyncCardData) => {
     setData(newData);
     await context.setCardData(newData);
     if (onDataChange) onDataChange(newData);
+    setTimeout(() => context.sizeToContent?.(), 50);
   };
 
   // P0: Assign or Reassign Primary Owner
@@ -153,6 +186,7 @@ export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange 
     const newData: TeamSyncCardData = {
       ...data,
       handoff,
+      handoffLabel: 'Pending',
       history: newHistory,
     };
 
@@ -190,12 +224,13 @@ export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange 
         assignedAt: now,
         assignedBy: { id: sender.id, fullName: sender.fullName },
       },
-      handoff: null, // Handoff completed, ownership transferred
+      handoff: null,
+      handoffLabel: 'In Progress',
       history: newHistory,
     };
 
     await updateCardData(newData);
-    context.notify?.(`Handoff accepted. You are now the primary owner.`);
+    context.notify?.('Handoff accepted. Primary ownership transferred.');
   };
 
   // P0: Recipient Declines Handoff
@@ -225,6 +260,7 @@ export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange 
         resolvedAt: now,
         declineReason: reason,
       },
+      handoffLabel: 'Not started',
       history: newHistory,
     };
 
@@ -252,6 +288,7 @@ export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange 
     const newData: TeamSyncCardData = {
       ...data,
       handoff: null,
+      handoffLabel: 'Not started',
       history: newHistory,
     };
 
@@ -266,6 +303,8 @@ export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange 
       </div>
     );
   }
+
+  const visibleHistory = showAllHistory ? data.history : data.history.slice(0, 4);
 
   return (
     <div className="teamsync-card-section" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
@@ -284,26 +323,107 @@ export const CardSection: React.FC<CardSectionProps> = ({ context, onDataChange 
         owner={data.owner}
         members={members}
         currentMember={currentMember}
+        escalationThresholdHours={thresholdHours}
         onRequestHandoff={handleRequestHandoff}
         onAcceptHandoff={handleAcceptHandoff}
         onDeclineHandoff={handleDeclineHandoff}
         onCancelHandoff={handleCancelHandoff}
       />
 
-      {/* Feature 4 (P1): Responsibility History placeholder slot */}
-      {/* <div
+      {/* 3. Feature 4 (P1): Responsibility History Audit Log */}
+      <div
         style={{
-          border: '1px dashed #C1C7D0',
+          backgroundColor: '#ffffff',
+          border: '1px solid #DFE1E6',
           borderRadius: '8px',
-          padding: '10px 12px',
-          backgroundColor: '#FAFBFC',
-          textAlign: 'center',
-          color: '#6B778C',
-          fontSize: '11px',
+          padding: '12px 14px',
+          boxShadow: '0 1px 2px rgba(9, 30, 66, 0.06)',
         }}
       >
-        <strong>Next up: Feature 4 (P1 History & Escalation)</strong> &mdash; Audit trail of all ownership changes, handoffs, and elapsed timers.
-      </div> */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: data.history.length > 0 ? '10px' : '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ width: '6px', height: '14px', backgroundColor: '#64748B', borderRadius: '2px' }} />
+            <span style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 700, color: '#5E6C84', letterSpacing: '0.4px' }}>
+              Responsibility History ({data.history.length})
+            </span>
+          </div>
+
+          {data.history.length > 4 && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowAllHistory(!showAllHistory);
+                setTimeout(() => context.sizeToContent?.(), 50);
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#2563EB',
+                fontSize: '11px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                padding: '2px 4px',
+              }}
+            >
+              {showAllHistory ? 'Show recent' : `Show all (${data.history.length})`}
+            </button>
+          )}
+        </div>
+
+        {data.history.length === 0 ? (
+          <div style={{ fontSize: '12px', color: '#64748B', fontStyle: 'italic' }}>
+            No ownership or handoff events recorded yet.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {visibleHistory.map((item) => {
+              const badge = HISTORY_BADGE_COLORS[item.type] || { dot: '#64748B', label: 'Event' };
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '8px',
+                    fontSize: '12px',
+                    paddingBottom: '6px',
+                    borderBottom: '1px solid #F1F5F9',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      backgroundColor: badge.dot,
+                      marginTop: '5px',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: '#0F172A', fontWeight: 500, lineHeight: 1.35 }}>
+                      {item.summary}
+                    </div>
+                    {item.note && (
+                      <div style={{ fontSize: '11px', color: '#475569', fontStyle: 'italic', marginTop: '2px' }}>
+                        &ldquo;{item.note}&rdquo;
+                      </div>
+                    )}
+                    <div style={{ fontSize: '10px', color: '#94A3B8', marginTop: '2px' }}>
+                      {new Date(item.timestamp).toLocaleString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

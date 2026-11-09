@@ -31,3 +31,12 @@ textarea:focus-visible {
   outline: 2px solid #4c9aff;
   outline-offset: 1px;
 }
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
