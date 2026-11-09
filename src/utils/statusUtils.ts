@@ -68,21 +68,59 @@ export function getHoursPending(createdAt?: string): number {
 }
 
 /**
- * Formats elapsed hours into human readable string (e.g. "3h ago", "1d 4h ago")
+ * Formats elapsed hours into human readable string (e.g. "12 mins ago", "3 hours ago", "1d 4h ago")
  */
 export function formatHoursPending(hours: number): string {
-  if (hours < 1) return '< 1 hour';
-  if (hours < 24) return `${Math.floor(hours)}h ago`;
+  if (hours < 1) {
+    const mins = Math.round(hours * 60);
+    return mins <= 0 ? 'Just now' : `${mins} min${mins === 1 ? '' : 's'} ago`;
+  }
+  if (hours < 24) {
+    const wholeHours = Math.floor(hours);
+    return `${wholeHours} hour${wholeHours === 1 ? '' : 's'} ago`;
+  }
   const days = Math.floor(hours / 24);
   const remainingHours = Math.floor(hours % 24);
   return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`;
 }
 
 /**
- * Short compact duration for compact table badges (e.g. "28h", "2d")
+ * Formats exact elapsed time from an ISO timestamp (minute precision under 1 day)
+ */
+export function formatExactTimeAgo(createdAt?: string, nowMs: number = Date.now()): string {
+  if (!createdAt) return 'Just now';
+  const created = new Date(createdAt).getTime();
+  if (Number.isNaN(created)) return 'Just now';
+
+  const diffMs = Math.max(0, nowMs - created);
+  const totalMinutes = Math.floor(diffMs / (1000 * 60));
+
+  if (totalMinutes < 1) return 'Just now';
+  if (totalMinutes < 60) {
+    return `${totalMinutes} min${totalMinutes === 1 ? '' : 's'} ago`;
+  }
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return remainingMinutes > 0
+      ? `${totalHours}h ${remainingMinutes}m ago`
+      : `${totalHours} hour${totalHours === 1 ? '' : 's'} ago`;
+  }
+
+  const days = Math.floor(totalHours / 24);
+  const remainingHours = totalHours % 24;
+  return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`;
+}
+
+/**
+ * Short compact duration for compact table badges (e.g. "15m", "28h", "2d")
  */
 export function formatCompactHours(hours: number): string {
-  if (hours < 1) return '<1h';
+  if (hours < 1) {
+    const mins = Math.round(hours * 60);
+    return mins <= 0 ? 'now' : `${mins}m`;
+  }
   if (hours < 24) return `${Math.round(hours)}h`;
   const days = Math.floor(hours / 24);
   const rem = Math.round(hours % 24);

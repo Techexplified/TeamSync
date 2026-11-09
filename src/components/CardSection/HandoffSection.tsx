@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { TaskHandoff, TaskOwner, TeamMember } from '../../types/teamsync';
 import { Avatar } from '../common/Avatar';
 import { Badge } from '../common/Badge';
@@ -9,7 +9,7 @@ import {
   SendIcon,
   ClockIcon,
 } from '../common/Icons';
-import { formatHoursPending, getHoursPending, DEFAULT_ESCALATION_THRESHOLD_HOURS } from '../../utils/statusUtils';
+import { formatExactTimeAgo, DEFAULT_ESCALATION_THRESHOLD_HOURS } from '../../utils/statusUtils';
 
 interface HandoffSectionProps {
   handoff: TaskHandoff | null;
@@ -40,13 +40,26 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
   const [declineReason, setDeclineReason] = useState('');
   const [showDeclineInput, setShowDeclineInput] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const isPending = handoff?.status === 'pending';
   const isDeclined = handoff?.status === 'declined';
-  const hoursPending = isPending && handoff ? getHoursPending(handoff.createdAt) : 0;
+  const createdTimeMs = isPending && handoff?.createdAt ? new Date(handoff.createdAt).getTime() : 0;
+  const hoursPending =
+    isPending && createdTimeMs && !Number.isNaN(createdTimeMs)
+      ? Math.max(0, (nowMs - createdTimeMs) / (1000 * 60 * 60))
+      : 0;
   const isEscalated = isPending && hoursPending >= escalationThresholdHours;
   const isRecipient = handoff && currentMember && handoff.toMember.id === currentMember.id;
   const isSender = handoff && currentMember && handoff.fromMember.id === currentMember.id;
+
+  useEffect(() => {
+    if (!isPending) return;
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [isPending]);
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,6 +70,7 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
     setSubmitting(true);
     try {
       await onRequestHandoff(recipient, note.trim());
+      setNowMs(Date.now());
       setIsFormOpen(false);
       setSelectedRecipientId('');
       setNote('');
@@ -163,9 +177,12 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
               <Avatar member={handoff.toMember} size="sm" showName />
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: isEscalated ? '#B91C1C' : '#7A4B00', fontWeight: 600 }}>
+            <div
+              title={new Date(handoff.createdAt).toLocaleString()}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: isEscalated ? '#B91C1C' : '#7A4B00', fontWeight: 600 }}
+            >
               <ClockIcon size={12} />
-              {formatHoursPending(hoursPending)}
+              {formatExactTimeAgo(handoff.createdAt, nowMs)}
             </div>
           </div>
 
