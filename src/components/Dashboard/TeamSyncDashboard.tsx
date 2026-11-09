@@ -2210,14 +2210,16 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                           borderRadius: '12px',
                           padding: '16px',
                           boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                          minWidth: 0,
+                          overflow: 'hidden',
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
                             {renderMemberAvatar(m, 34)}
-                            <div>
-                              <div style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A' }}>{m.fullName}</div>
-                              <div style={{ fontSize: '11px', color: '#64748B' }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.fullName}</div>
+                              <div style={{ fontSize: '11px', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {m.role || `@${m.username}`}
                               </div>
                             </div>
@@ -2230,6 +2232,8 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                               fontWeight: 700,
                               padding: '2px 8px',
                               borderRadius: '10px',
+                              flexShrink: 0,
+                              whiteSpace: 'nowrap',
                             }}
                           >
                             {memberTasks.length} {memberTasks.length === 1 ? 'task' : 'tasks'}
@@ -2283,13 +2287,14 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                           </div>
                         )}
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
                           {memberTasks.map((t) => {
                             const tOverdue = isCardOverdue(t);
                             return (
                               <div
                                 key={t.id}
                                 onClick={() => setInspectedCardId(t.id)}
+                                title={t.name}
                                 style={{
                                   padding: '8px 10px',
                                   backgroundColor: '#F8FAFC',
@@ -2303,12 +2308,14 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                                   alignItems: 'center',
                                   justifyContent: 'space-between',
                                   gap: '8px',
+                                  minWidth: 0,
+                                  overflow: 'hidden',
                                 }}
                               >
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {t.name}
                                 </span>
-                                <span style={{ fontSize: '10px', color: tOverdue ? '#DC2626' : '#64748B', fontWeight: tOverdue ? 700 : 500, flexShrink: 0 }}>
+                                <span style={{ fontSize: '10px', color: tOverdue ? '#DC2626' : '#64748B', fontWeight: tOverdue ? 700 : 500, flexShrink: 0, whiteSpace: 'nowrap' }}>
                                   {formatCardDeadline(t)}
                                 </span>
                               </div>
@@ -2321,6 +2328,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                               <div
                                 key={`ho_${h.id}`}
                                 onClick={() => setInspectedCardId(h.id)}
+                                title={h.name}
                                 style={{
                                   padding: '8px 10px',
                                   backgroundColor: '#FFFBEB',
@@ -2334,10 +2342,16 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                                   alignItems: 'center',
                                   justifyContent: 'space-between',
                                   gap: '8px',
+                                  minWidth: 0,
+                                  overflow: 'hidden',
                                 }}
                               >
-                                <span>⇄ Accept: {h.name}</span>
-                                <span style={{ fontSize: '10px' }}>from {h.data.handoff?.fromMember.fullName.split(' ')[0]}</span>
+                                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  ⇄ Accept: {h.name}
+                                </span>
+                                <span style={{ fontSize: '10px', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                                  from {h.data.handoff?.fromMember.fullName.split(' ')[0]}
+                                </span>
                               </div>
                             ))}
 
@@ -2364,12 +2378,14 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                           border: '1.5px dashed #FCA5A5',
                           borderRadius: '12px',
                           padding: '16px',
+                          minWidth: 0,
+                          overflow: 'hidden',
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                             {renderMemberAvatar(null, 34)}
-                            <div>
+                            <div style={{ minWidth: 0 }}>
                               <div style={{ fontSize: '14px', fontWeight: 700, color: '#991B1B' }}>Unassigned Tasks</div>
                               <div style={{ fontSize: '11px', color: '#DC2626' }}>Needs Primary Owner</div>
                             </div>
@@ -2382,17 +2398,19 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                               fontWeight: 700,
                               padding: '2px 8px',
                               borderRadius: '10px',
+                              flexShrink: 0,
                             }}
                           >
                             {unassignedTasks.length}
                           </span>
                         </div>
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
                           {unassignedTasks.map((t) => (
                             <div
                               key={t.id}
                               onClick={() => setInspectedCardId(t.id)}
+                              title={t.name}
                               style={{
                                 padding: '8px 10px',
                                 backgroundColor: '#ffffff',
@@ -2405,10 +2423,25 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
+                                gap: '8px',
+                                minWidth: 0,
+                                overflow: 'hidden',
                               }}
                             >
-                              <span>{t.name}</span>
-                              <span style={{ fontSize: '10px', color: '#DC2626' }}>Assign &rarr;</span>
+                              <span
+                                style={{
+                                  flex: 1,
+                                  minWidth: 0,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {t.name}
+                              </span>
+                              <span style={{ fontSize: '10px', color: '#DC2626', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                                Assign &rarr;
+                              </span>
                             </div>
                           ))}
 
