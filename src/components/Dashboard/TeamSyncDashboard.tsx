@@ -1173,7 +1173,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
             </div>
 
             {/* 4. AI SUMMARY CARD */}
-            <div
+            {/* <div
               style={{
                 backgroundColor: '#F8F7FF',
                 border: '1px solid #EDE9FE',
@@ -1181,7 +1181,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                 padding: '16px 20px',
                 marginBottom: '22px',
               }}
-            >
+             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div
@@ -1263,7 +1263,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                   <li key={i}>{bullet}</li>
                 ))}
               </ul>
-            </div>
+            </div> */}
 
             {/* 4B. ESCALATION ALERT BANNER (P1 Escalation & Manager Notification) */}
             {escalatedPendingCards.length > 0 && (() => {
@@ -1721,7 +1721,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                     </div>
 
                     {/* All Priorities */}
-                    <div style={{ position: 'relative' }}>
+                    {/* <div style={{ position: 'relative' }}>
                       <select
                         value={selectedPriority}
                         onChange={(e) => setSelectedPriority(e.target.value)}
@@ -1754,7 +1754,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                       >
                         <polyline points="6 9 12 15 18 9" />
                       </svg>
-                    </div>
+                    </div> */}
 
                     {/* All Deadlines (Dynamic Real-Time Buckets) */}
                     <div style={{ position: 'relative' }}>

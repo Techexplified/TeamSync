@@ -18,9 +18,13 @@ export function buildRequestHandoffData(
   note: string,
   currentMember?: TeamMember | null
 ): TeamSyncCardData | null {
-  if (!data.owner) return null;
+  // Rule: Only the currently assigned owner can initiate a handoff to another person
+  if (!data.owner || !currentMember) return null;
+  if (data.owner.id !== currentMember.id) return null;
+  if (data.handoff?.status === 'pending') return null;
+  if (toMember.id === data.owner.id || toMember.id === currentMember.id) return null;
 
-  const actor = currentMember || data.owner;
+  const actor = currentMember;
   const now = new Date().toISOString();
 
   const handoff: TaskHandoff = {

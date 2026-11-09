@@ -50,6 +50,11 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
 
   const isPending = handoff?.status === 'pending';
   const isDeclined = handoff?.status === 'declined';
+  const isCurrentOwner = Boolean(owner && currentMember && owner.id === currentMember.id);
+  const eligibleRecipients = members.filter(
+    (m) => m.id !== owner?.id && m.id !== currentMember?.id
+  );
+  const showHandoffForm = isFormOpen && !isPending && isCurrentOwner;
   const createdTimeMs = isPending && handoff?.createdAt ? new Date(handoff.createdAt).getTime() : 0;
   const hoursPending =
     isPending && createdTimeMs && !Number.isNaN(createdTimeMs)
@@ -67,10 +72,15 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
     return () => window.clearInterval(timer);
   }, [isPending]);
 
+  const openHandoffForm = () => {
+    if (!isCurrentOwner) return;
+    setIsFormOpen(true);
+  };
+
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedRecipientId) return;
-    const recipient = members.find((m) => m.id === selectedRecipientId);
+    if (!isCurrentOwner || !selectedRecipientId) return;
+    const recipient = eligibleRecipients.find((m) => m.id === selectedRecipientId);
     if (!recipient) return;
 
     setSubmitting(true);
@@ -477,22 +487,24 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
             <span style={{ fontSize: '12px', fontWeight: 600, color: '#BF2600' }}>
               Handoff was declined by {handoff.toMember.fullName}
             </span>
-            <button
-              type="button"
-              onClick={() => setIsFormOpen(true)}
-              style={{
-                backgroundColor: '#0052CC',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '4px',
-                padding: '4px 8px',
-                fontSize: '11px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Retry Handoff
-            </button>
+            {isCurrentOwner && (
+              <button
+                type="button"
+                onClick={openHandoffForm}
+                style={{
+                  backgroundColor: '#0052CC',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Retry Handoff
+              </button>
+            )}
           </div>
           {handoff.declineReason && (
             <div style={{ fontSize: '11px', color: '#172B4D', fontStyle: 'italic', marginTop: '4px' }}>
@@ -503,44 +515,100 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
       )}
 
       {/* 3. Empty State: Initiate Handoff Button */}
-      {!isPending && !isFormOpen && (
+      {!isPending && !showHandoffForm && (
         <div>
           {owner ? (
+            isCurrentOwner ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <span style={{ fontSize: '12px', color: '#5E6C84' }}>
+                  Need to transfer responsibility to another teammate?
+                </span>
+                <button
+                  type="button"
+                  onClick={openHandoffForm}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: '#0052CC',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <ArrowRightIcon size={13} />
+                  Request Handoff
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <span style={{ fontSize: '12px', color: '#6B778C' }}>
+                  Only <strong>{owner.fullName}</strong> can send a handoff for this task.
+                </span>
+                <button
+                  type="button"
+                  disabled
+                  aria-disabled="true"
+                  title={`Blocked: Only the assigned owner (${owner.fullName}) can send a handoff.`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: '#F1F5F9',
+                    color: '#94A3B8',
+                    border: '1px solid #E2E8F0',
+                    borderRadius: '4px',
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'not-allowed',
+                    opacity: 0.85,
+                  }}
+                >
+                  <ArrowRightIcon size={13} />
+                  Request Handoff
+                </button>
+              </div>
+            )
+          ) : (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-              <span style={{ fontSize: '12px', color: '#5E6C84' }}>
-                Need to transfer responsibility to another teammate?
+              <span style={{ fontSize: '12px', color: '#6B778C', fontStyle: 'italic' }}>
+                Assign a primary task owner first to enable handoffs.
               </span>
               <button
                 type="button"
-                onClick={() => setIsFormOpen(true)}
+                disabled
+                aria-disabled="true"
+                title="Blocked: Only the assigned task owner can send a handoff."
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '6px',
-                  backgroundColor: '#0052CC',
-                  color: '#ffffff',
-                  border: 'none',
+                  backgroundColor: '#F1F5F9',
+                  color: '#94A3B8',
+                  border: '1px solid #E2E8F0',
                   borderRadius: '4px',
                   padding: '6px 12px',
                   fontSize: '12px',
                   fontWeight: 600,
-                  cursor: 'pointer',
+                  cursor: 'not-allowed',
+                  opacity: 0.85,
                 }}
               >
                 <ArrowRightIcon size={13} />
                 Request Handoff
               </button>
             </div>
-          ) : (
-            <div style={{ fontSize: '12px', color: '#6B778C', fontStyle: 'italic' }}>
-              Assign a primary task owner first to enable handoffs.
-            </div>
           )}
         </div>
       )}
 
       {/* 4. Form: Initiate Handoff */}
-      {isFormOpen && (
+      {showHandoffForm && (
         <form
           onSubmit={handleFormSubmit}
           style={{
@@ -579,18 +647,21 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
               <option value="" style={{ backgroundColor: '#ffffff', color: '#6B778C' }}>
                 Select recipient teammate...
               </option>
-              {members
-                .filter((m) => m.id !== owner?.id)
-                .map((m) => (
-                  <option
-                    key={m.id}
-                    value={m.id}
-                    style={{ backgroundColor: '#ffffff', color: '#172B4D' }}
-                  >
-                    {m.fullName} {m.role ? `(${m.role})` : ''}
-                  </option>
-                ))}
+              {eligibleRecipients.map((m) => (
+                <option
+                  key={m.id}
+                  value={m.id}
+                  style={{ backgroundColor: '#ffffff', color: '#172B4D' }}
+                >
+                  {m.fullName} {m.role ? `(${m.role})` : ''}
+                </option>
+              ))}
             </select>
+            {eligibleRecipients.length === 0 && (
+              <div style={{ fontSize: '11px', color: '#BF2600', marginTop: '4px' }}>
+                No other team members available to receive a handoff.
+              </div>
+            )}
           </div>
 
           {/* Context Note */}

@@ -226,10 +226,18 @@ export const CardSection: React.FC<CardSectionProps> = ({
   };
 
   // P0: Request Task Handoff
-  // Guardrail: Owner remains unchanged until recipient explicitly accepts!
+  // Guardrail: Only the assigned owner can initiate a handoff, and owner remains unchanged until accepted
   const handleRequestHandoff = async (toMember: TeamMember, note: string) => {
+    if (!data.owner || !currentMember || data.owner.id !== currentMember.id) {
+      context.notify?.('Only the assigned owner of this task can send a handoff.');
+      return;
+    }
+
     const newData = buildRequestHandoffData(data, toMember, note, currentMember);
-    if (!newData) return;
+    if (!newData) {
+      context.notify?.('Unable to send handoff request.');
+      return;
+    }
 
     await updateCardData(newData);
     context.notify?.(`Handoff requested to ${toMember.fullName}`);
