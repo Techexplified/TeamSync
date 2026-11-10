@@ -129,9 +129,7 @@ export interface BoardInfo {
 export interface TeamSyncSettings {
   reminderThresholdHours: number;
   escalationThresholdHours: number;
-  autoRefreshSeconds: number;
   escalationContactId: string;
-  includeCompletedInHealth: boolean;
 }
 
 export interface MockCardUpdatePatch {

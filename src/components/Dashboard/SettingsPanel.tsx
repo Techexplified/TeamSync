@@ -34,9 +34,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     setSaving(true);
     try {
       await onSaveSettings({
-        ...draft,
         reminderThresholdHours: Math.max(1, Number(draft.reminderThresholdHours) || 12),
         escalationThresholdHours: Math.max(1, Number(draft.escalationThresholdHours) || 24),
+        escalationContactId: draft.escalationContactId || '',
       });
       setSavedBanner(true);
       setTimeout(() => setSavedBanner(false), 3000);
@@ -65,7 +65,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             Power-Up Settings
           </h1>
           <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748B' }}>
-            Configure escalation thresholds, real-time sync intervals, and accountability defaults for this board.
+            Configure escalation thresholds and accountability defaults for this board.
           </p>
         </div>
 
@@ -248,60 +248,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </select>
             <div style={{ fontSize: '11px', color: '#64748B', marginTop: '6px' }}>
               When a pending handoff exceeds {draft.escalationThresholdHours}h, this contact receives dashboard &amp; card-level escalation alerts and can acknowledge escalations.
-            </div>
-          </div>
-        </div>
-
-        {/* Section 2: Real-Time Sync & Health Scoring */}
-        <div
-          style={{
-            backgroundColor: '#ffffff',
-            border: '1px solid #E2E8F0',
-            borderRadius: '12px',
-            padding: '18px 20px',
-          }}
-        >
-          <div style={{ fontSize: '15px', fontWeight: 700, color: '#0F172A', marginBottom: '14px' }}>
-            Real-Time Sync & Health Score Calculation
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
-                Auto-Refresh Board Polling Interval
-              </label>
-              <select
-                value={draft.autoRefreshSeconds}
-                onChange={(e) => setDraft({ ...draft, autoRefreshSeconds: Number(e.target.value) })}
-                style={{
-                  width: '100%',
-                  padding: '8px 10px',
-                  fontSize: '13px',
-                  borderRadius: '8px',
-                  border: '1px solid #CBD5E1',
-                  backgroundColor: '#ffffff',
-                  color: '#0F172A',
-                  colorScheme: 'light',
-                }}
-              >
-                <option value={5}>Every 5 seconds (Fastest)</option>
-                <option value={15}>Every 15 seconds (Recommended)</option>
-                <option value={30}>Every 30 seconds</option>
-                <option value={60}>Every 60 seconds</option>
-                <option value={0}>Manual refresh only</option>
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', paddingTop: '22px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#334155', fontWeight: 500 }}>
-                <input
-                  type="checkbox"
-                  checked={draft.includeCompletedInHealth}
-                  onChange={(e) => setDraft({ ...draft, includeCompletedInHealth: e.target.checked })}
-                  style={{ width: '16px', height: '16px', accentColor: '#2563EB' }}
-                />
-                Include completed tasks in Health Score ratio
-              </label>
             </div>
           </div>
         </div>

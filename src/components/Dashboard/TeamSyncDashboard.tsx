@@ -39,6 +39,8 @@ interface TeamSyncDashboardProps {
   onDataSynced?: () => void;
 }
 
+const REALTIME_SYNC_INTERVAL_MS = 5000;
+
 type SortField = 'name' | 'owner' | 'status' | 'handoff';
 
 function getDashboardCardStatus(card: BoardCardSummary): 'In Progress' | 'To Do' | 'Done' {
@@ -97,6 +99,8 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const autoEscalatedKeysRef = useRef<Set<string>>(new Set());
   const managerAlertedIdsRef = useRef<Set<string>>(new Set());
+  const syncSeqRef = useRef(0);
+  const inFlightCountRef = useRef(0);
 
   const fetchBoardSnapshot = useCallback(async () => {
     const [boardCards, memberList, current, info, loadedSettings] = await Promise.all([
@@ -177,11 +181,14 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
   const loadData = useCallback(
     async (options?: { silent?: boolean }) => {
+      const seq = ++syncSeqRef.current;
+      inFlightCountRef.current += 1;
       if (!options?.silent) {
         setIsRefreshing(true);
       }
       try {
         const snapshot = await fetchBoardSnapshot();
+        if (seq !== syncSeqRef.current) return;
         setCards(snapshot.boardCards);
         setMembers(snapshot.memberList);
         setCurrentMember(snapshot.current);
@@ -191,10 +198,13 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
         onDataSynced?.();
       } catch (e) {
         console.error('Failed to load dashboard data', e);
-        setBoardInfo((prev) => ({ ...prev, isConnected: false }));
+        if (seq === syncSeqRef.current) {
+          setBoardInfo((prev) => ({ ...prev, isConnected: false }));
+        }
       } finally {
+        inFlightCountRef.current = Math.max(0, inFlightCountRef.current - 1);
         setLoading(false);
-        if (!options?.silent) {
+        if (!options?.silent || inFlightCountRef.current === 0) {
           setIsRefreshing(false);
         }
       }
@@ -202,13 +212,15 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
     [fetchBoardSnapshot, onDataSynced]
   );
 
-  // Initial load + focus & cross-tab real-time sync listeners
+  // Initial load + focus, visibility, and cross-tab real-time sync listeners
   useEffect(() => {
     let active = true;
+    const initialSeq = ++syncSeqRef.current;
+    inFlightCountRef.current += 1;
 
     fetchBoardSnapshot()
       .then((snapshot) => {
-        if (!active) return;
+        if (!active || initialSeq !== syncSeqRef.current) return;
         setCards(snapshot.boardCards);
         setMembers(snapshot.memberList);
         setCurrentMember(snapshot.current);
@@ -219,11 +231,12 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
       })
       .catch((e) => {
         console.error('Failed to load dashboard data', e);
-        if (active) {
+        if (active && initialSeq === syncSeqRef.current) {
           setBoardInfo((prev) => ({ ...prev, isConnected: false }));
         }
       })
       .finally(() => {
+        inFlightCountRef.current = Math.max(0, inFlightCountRef.current - 1);
         if (active) setLoading(false);
       });
 
@@ -234,27 +247,32 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
     const handleFocus = () => {
       loadData({ silent: true });
     };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        loadData({ silent: true });
+      }
+    };
     window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       active = false;
       unsubscribe();
       window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [fetchBoardSnapshot, loadData, onDataSynced]);
 
-  // Real-time auto-refresh polling based on configured interval
+  // Always-on real-time background sync so KPIs & Team Health Score stay live
   useEffect(() => {
-    if (!settings.autoRefreshSeconds || settings.autoRefreshSeconds <= 0) return;
-
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && inFlightCountRef.current === 0) {
         loadData({ silent: true });
       }
-    }, settings.autoRefreshSeconds * 1000);
+    }, REALTIME_SYNC_INTERVAL_MS);
 
     return () => window.clearInterval(timer);
-  }, [settings.autoRefreshSeconds, loadData]);
+  }, [loadData]);
 
   // Live relative clock tick for "Generated X ago" & elapsed handoff timers
   useEffect(() => {
@@ -290,7 +308,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   }, [allKnownMembers, settings.escalationContactId]);
 
   // Live Dashboard Metrics + Health Score
-  const metrics = useMemo(() => computeDashboardMetrics(cards, settings), [cards, settings]);
+  const metrics = useMemo(() => computeDashboardMetrics(cards, settings, nowMs), [cards, settings, nowMs]);
 
   const escalatedPendingCards = useMemo(() => {
     return cards.filter((c) => {
@@ -830,11 +848,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
               color: boardInfo.isConnected ? '#475569' : '#DC2626',
               fontWeight: 500,
             }}
-            title={`Last synced ${formatRelativeSyncTime(boardInfo.lastSyncedAt)} • ${
-              settings.autoRefreshSeconds > 0
-                ? `Auto-sync every ${settings.autoRefreshSeconds}s`
-                : 'Manual sync'
-            }`}
+            title={`Last synced ${formatRelativeSyncTime(boardInfo.lastSyncedAt)} • Real-time sync every 5s`}
           >
             <span
               style={{

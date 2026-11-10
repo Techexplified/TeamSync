@@ -136,11 +136,29 @@ export function saveMockStoredCards(cards: BoardCardSummary[]) {
   }
 }
 
+function normalizeSettings(raw: unknown): TeamSyncSettings {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Partial<TeamSyncSettings>;
+  return {
+    reminderThresholdHours:
+      typeof obj.reminderThresholdHours === 'number' && obj.reminderThresholdHours >= 1
+        ? obj.reminderThresholdHours
+        : DEFAULT_SETTINGS.reminderThresholdHours,
+    escalationThresholdHours:
+      typeof obj.escalationThresholdHours === 'number' && obj.escalationThresholdHours >= 1
+        ? obj.escalationThresholdHours
+        : DEFAULT_SETTINGS.escalationThresholdHours,
+    escalationContactId:
+      typeof obj.escalationContactId === 'string'
+        ? obj.escalationContactId
+        : DEFAULT_SETTINGS.escalationContactId,
+  };
+}
+
 export function getMockStoredSettings(): TeamSyncSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (raw) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      return normalizeSettings(JSON.parse(raw));
     }
   } catch (e) {
     console.error('Failed to read settings from localStorage', e);
@@ -438,7 +456,7 @@ export function createRealTrelloContext(): ITrelloContext {
       try {
         const stored = await t.get('board', 'shared', 'teamsync_settings');
         if (stored && typeof stored === 'object') {
-          return { ...DEFAULT_SETTINGS, ...(stored as Partial<TeamSyncSettings>) };
+          return normalizeSettings(stored);
         }
       } catch (e) {
         console.warn('Could not read board settings, using defaults', e);

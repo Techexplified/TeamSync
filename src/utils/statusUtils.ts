@@ -13,9 +13,7 @@ export const DEFAULT_ESCALATION_THRESHOLD_HOURS = 24;
 export const DEFAULT_SETTINGS: TeamSyncSettings = {
   reminderThresholdHours: 12,
   escalationThresholdHours: DEFAULT_ESCALATION_THRESHOLD_HOURS,
-  autoRefreshSeconds: 15,
   escalationContactId: '',
-  includeCompletedInHealth: true,
 };
 
 /**
@@ -426,7 +424,8 @@ export interface DashboardMetrics {
  */
 export function computeDashboardMetrics(
   cards: BoardCardSummary[],
-  settings: TeamSyncSettings = DEFAULT_SETTINGS
+  settings: TeamSyncSettings = DEFAULT_SETTINGS,
+  nowMs: number = Date.now()
 ): DashboardMetrics {
   const totalTasks = cards.length;
 
@@ -453,7 +452,11 @@ export function computeDashboardMetrics(
 
     if (card.data.handoff?.status === 'pending') {
       pendingHandoffs++;
-      const hrs = getHoursPending(card.data.handoff.createdAt);
+      const createdTs = card.data.handoff.createdAt ? new Date(card.data.handoff.createdAt).getTime() : nowMs;
+      const hrs =
+        card.data.handoff.createdAt && !Number.isNaN(createdTs)
+          ? Math.max(0, Math.round(((nowMs - createdTs) / (1000 * 60 * 60)) * 10) / 10)
+          : 0;
       if (hrs >= settings.escalationThresholdHours) {
         escalatedHandoffs++;
       }
@@ -462,7 +465,7 @@ export function computeDashboardMetrics(
 
   let healthScore = 100;
   if (totalTasks > 0) {
-    const denominator = settings.includeCompletedInHealth ? totalTasks : Math.max(1, pendingTasks);
+    const denominator = totalTasks;
     const overduePenalty = (overdueTasks / denominator) * 52;
     const unownedPenalty = (unownedTasks / denominator) * 42;
     const escalatedPenalty = escalatedHandoffs * 5.5;
