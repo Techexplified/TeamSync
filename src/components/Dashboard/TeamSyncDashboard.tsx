@@ -16,7 +16,6 @@ import {
   // generateRealtimeAiSummary,
   getCardHandoffDisplay,
   getCardLifecycleStatus,
-  getCardPriority,
   getMemberColor,
   getMemberInitials,
   isCardCompleted,
@@ -82,7 +81,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
   const [selectedMember, setSelectedMember] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
-  const [selectedPriority, setSelectedPriority] = useState<string>('all');
   const [selectedDeadline, setSelectedDeadline] = useState<string>('all');
   const [onlyPendingHandoffs, setOnlyPendingHandoffs] = useState(false);
   const [onlyPendingTasks, setOnlyPendingTasks] = useState(false);
@@ -444,10 +442,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
         }
       }
 
-      if (selectedPriority !== 'all') {
-        if (getCardPriority(card).toLowerCase() !== selectedPriority.toLowerCase()) return false;
-      }
-
       if (!matchesDeadlineFilter(card, selectedDeadline)) {
         return false;
       }
@@ -469,7 +463,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
     onlyPendingHandoffs,
     onlyPendingTasks,
     selectedStatus,
-    selectedPriority,
     selectedDeadline,
     search,
     settings.escalationThresholdHours,
@@ -524,7 +517,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   const hasActiveFilters =
     selectedMember !== 'all' ||
     selectedStatus !== 'all' ||
-    selectedPriority !== 'all' ||
     selectedDeadline !== 'all' ||
     onlyPendingHandoffs ||
     onlyPendingTasks ||
@@ -533,7 +525,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   const clearAllFilters = () => {
     setSelectedMember('all');
     setSelectedStatus('all');
-    setSelectedPriority('all');
     setSelectedDeadline('all');
     setOnlyPendingHandoffs(false);
     setOnlyPendingTasks(false);
@@ -632,7 +623,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   };
 
   const handleExportCSV = () => {
-    const headers = ['Task', 'List', 'Owner', 'Priority', 'Deadline', 'Status', 'Handoff', 'Handoff Target'];
+    const headers = ['Task', 'List', 'Owner', 'Deadline', 'Status', 'Handoff', 'Handoff Target'];
     const escapeCsv = (val: string) => `"${String(val).replace(/"/g, '""')}"`;
 
     const exportSource = sortedCards.length > 0 ? sortedCards : cards;
@@ -648,7 +639,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
         escapeCsv(c.name),
         escapeCsv(c.listName),
         escapeCsv(c.data.owner?.fullName || 'Unassigned'),
-        escapeCsv(getCardPriority(c)),
         escapeCsv(formatCardDeadline(c)),
         escapeCsv(getDashboardCardStatus(c)),
         escapeCsv(ho.label),

@@ -4,14 +4,12 @@ import type {
   ITrelloContext,
   TeamMember,
   TeamSyncSettings,
-  TaskPriority,
 } from '../../types/teamsync';
 import { createScopedCardContext } from '../../trello/trelloBridge';
 import { CardSection } from '../CardSection/CardSection';
 import {
   formatCardDeadline,
   getCardLifecycleStatus,
-  getCardPriority,
   isCardCompleted,
   isCardOverdue,
 } from '../../utils/statusUtils';
@@ -47,7 +45,6 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
   }, [onClose]);
 
   const status = getCardLifecycleStatus(card);
-  const priority = getCardPriority(card);
   const completed = isCardCompleted(card);
   const overdue = isCardOverdue(card);
   const deadlineText = formatCardDeadline(card);
@@ -66,12 +63,6 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
       listName: !completed ? 'Done' : card.listName === 'Done' ? 'In Progress' : card.listName,
       trelloStatus: !completed ? 'Done' : 'In Progress',
     });
-    onUpdated();
-  };
-
-  const handlePriorityChange = async (nextPriority: TaskPriority) => {
-    if (!context.updateCardMeta) return;
-    await context.updateCardMeta(card.id, { priority: nextPriority });
     onUpdated();
   };
 
@@ -169,20 +160,7 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
               >
                 {status}
               </span>
-              <span
-                style={{
-                  backgroundColor:
-                    priority === 'High' ? '#FEF2F2' : priority === 'Low' ? '#ECFDF5' : '#EFF6FF',
-                  color:
-                    priority === 'High' ? '#B91C1C' : priority === 'Low' ? '#047857' : '#1D4ED8',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  padding: '2px 8px',
-                  borderRadius: '6px',
-                }}
-              >
-                {priority} Priority
-              </span>
+
             </div>
 
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A', lineHeight: 1.3 }}>
@@ -291,25 +269,7 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
                   {completed ? 'Reopen Task' : 'Mark Complete'}
                 </button>
 
-                <select
-                  value={priority}
-                  onChange={(e) => handlePriorityChange(e.target.value as TaskPriority)}
-                  style={{
-                    padding: '5px 8px',
-                    fontSize: '12px',
-                    borderRadius: '6px',
-                    border: '1px solid #CBD5E1',
-                    backgroundColor: '#ffffff',
-                    color: '#0F172A',
-                    colorScheme: 'light',
-                  }}
-                >
-                  <option value="High">High Priority</option>
-                  <option value="Medium">Medium Priority</option>
-                  <option value="Low">Low Priority</option>
-                </select>
-
-                <input
+<input
                   type="date"
                   value={dueDateInputValue}
                   onChange={(e) => handleDueDateChange(e.target.value)}

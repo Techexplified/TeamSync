@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { BoardCardSummary, ITrelloContext, TaskPriority } from './types/teamsync';
+import type { BoardCardSummary, ITrelloContext } from './types/teamsync';
 import { MOCK_MEMBERS } from './trello/mockData';
 import {
   addMockCard,
@@ -32,7 +32,6 @@ export function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showAddTaskBar, setShowAddTaskBar] = useState(false);
   const [newTaskName, setNewTaskName] = useState('');
-  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>('Medium');
 
   useEffect(() => {
     if (view === 'connector') {
@@ -68,7 +67,7 @@ export function App() {
     tomorrow.setHours(17, 0, 0, 0);
     const created = addMockCard(newTaskName.trim(), {
       listName: 'To Do',
-      priority: newTaskPriority,
+      priority: 'Medium',
       due: tomorrow.toISOString(),
       ownerId: null,
     });
@@ -322,23 +321,6 @@ export function App() {
               colorScheme: 'dark',
             }}
           />
-          <select
-            value={newTaskPriority}
-            onChange={(e) => setNewTaskPriority(e.target.value as TaskPriority)}
-            style={{
-              padding: '6px 8px',
-              fontSize: '12px',
-              borderRadius: '6px',
-              border: '1px solid #475569',
-              backgroundColor: '#0F172A',
-              color: '#ffffff',
-              colorScheme: 'dark',
-            }}
-          >
-            <option value="High">High Priority</option>
-            <option value="Medium">Medium Priority</option>
-            <option value="Low">Low Priority</option>
-          </select>
           <button
             type="submit"
             disabled={!newTaskName.trim()}
