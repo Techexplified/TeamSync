@@ -8,12 +8,13 @@ import {
   isCardOverdue,
 } from '../../utils/statusUtils';
 
-export type PendingScope = 'all' | 'mine' | 'sent' | 'escalated';
+export type PendingScope = 'all' | 'mine' | 'sent' | 'reminded' | 'escalated';
 
 interface PendingActionsPanelProps {
   cards: BoardCardSummary[];
   currentMember: TeamMember | null;
   escalationContact: TeamMember | null;
+  reminderThresholdHours: number;
   escalationThresholdHours: number;
   nowMs: number;
   search: string;
@@ -24,6 +25,7 @@ interface PendingActionsPanelProps {
   onAcceptHandoff: (card: BoardCardSummary) => Promise<void>;
   onDeclineHandoff: (card: BoardCardSummary, reason: string) => Promise<void>;
   onCancelHandoff: (card: BoardCardSummary) => Promise<void>;
+  onSendReminder: (card: BoardCardSummary) => Promise<void>;
   onNotifyEscalation: (card: BoardCardSummary) => Promise<void>;
   onAcknowledgeEscalation: (card: BoardCardSummary) => Promise<void>;
   onOpenSettings?: () => void;
@@ -33,6 +35,7 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
   cards,
   currentMember,
   escalationContact,
+  reminderThresholdHours,
   escalationThresholdHours,
   nowMs,
   search,
@@ -43,6 +46,7 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
   onAcceptHandoff,
   onDeclineHandoff,
   onCancelHandoff,
+  onSendReminder,
   onNotifyEscalation,
   onAcknowledgeEscalation,
   onOpenSettings,
@@ -104,34 +108,41 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
           ? Math.max(0, (nowMs - createdTs) / (1000 * 60 * 60))
           : 0;
         const isEscalated = hoursPending >= escalationThresholdHours;
-        return { card, handoff, hoursPending, isEscalated };
+        const isReminded = !isEscalated && (hoursPending >= reminderThresholdHours || Boolean(handoff.reminderSentAt));
+        return { card, handoff, hoursPending, isEscalated, isReminded };
       })
       .sort((a, b) => b.hoursPending - a.hoursPending);
-  }, [cards, nowMs, escalationThresholdHours]);
+  }, [cards, nowMs, reminderThresholdHours, escalationThresholdHours]);
 
   const counts = useMemo(() => {
     let mine = 0;
     let sent = 0;
+    let reminded = 0;
     let escalated = 0;
     for (const item of pendingEntries) {
       if (currentMember && item.handoff.toMember.id === currentMember.id) mine++;
       if (currentMember && item.handoff.fromMember.id === currentMember.id) sent++;
+      if (item.isReminded) reminded++;
       if (item.isEscalated) escalated++;
     }
     return {
       all: pendingEntries.length,
       mine,
       sent,
+      reminded,
       escalated,
     };
   }, [pendingEntries, currentMember]);
 
   const visibleEntries = useMemo(() => {
-    return pendingEntries.filter(({ card, handoff, isEscalated }) => {
+    return pendingEntries.filter(({ card, handoff, isReminded, isEscalated }) => {
       if (scope === 'mine' && (!currentMember || handoff.toMember.id !== currentMember.id)) {
         return false;
       }
       if (scope === 'sent' && (!currentMember || handoff.fromMember.id !== currentMember.id)) {
+        return false;
+      }
+      if (scope === 'reminded' && !isReminded) {
         return false;
       }
       if (scope === 'escalated' && !isEscalated) {
@@ -200,6 +211,7 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
                 badgeColor: '#2563EB',
               },
               { id: 'sent' as const, label: `Sent by Me (${counts.sent})`, badgeColor: '#64748B' },
+              { id: 'reminded' as const, label: `Reminded >${reminderThresholdHours}h (${counts.reminded})`, badgeColor: '#D97706' },
               { id: 'escalated' as const, label: `Escalated >${escalationThresholdHours}h (${counts.escalated})`, badgeColor: '#DC2626' },
             ] as const
           ).map((tab) => {
@@ -283,7 +295,7 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
             </tr>
           </thead>
           <tbody>
-            {visibleEntries.map(({ card, handoff, isEscalated }, idx) => {
+            {visibleEntries.map(({ card, handoff, isReminded, isEscalated }, idx) => {
               const isRecipient = Boolean(currentMember && handoff.toMember.id === currentMember.id);
               const isSender = Boolean(currentMember && handoff.fromMember.id === currentMember.id);
               const isEscalationLead = Boolean(
@@ -404,22 +416,30 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: '4px',
-                        backgroundColor: isEscalated ? '#FEE2E2' : '#FEF3C7',
+                        backgroundColor: isEscalated ? '#FEE2E2' : isReminded ? '#FEF3C7' : '#FEF9C3',
                         color: isEscalated ? '#B91C1C' : '#92400E',
-                        border: isEscalated ? '1px solid #FCA5A5' : '1px solid #FDE68A',
+                        border: isEscalated ? '1px solid #FCA5A5' : isReminded ? '1px solid #F59E0B' : '1px solid #FDE68A',
                         fontSize: '11px',
                         fontWeight: 700,
                         padding: '3px 8px',
                         borderRadius: '6px',
                       }}
                     >
-                      <span>{isEscalated ? '🚨' : '⏱'}</span>
+                      <span>{isEscalated ? '🚨' : isReminded ? '🔔' : '⏱'}</span>
                       <span>{formatExactTimeAgo(handoff.createdAt, nowMs)}</span>
                     </div>
 
                     <div style={{ fontSize: '10px', color: '#64748B', marginTop: '4px' }}>
                       Sent {new Date(handoff.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </div>
+
+                    {isReminded && (
+                      <div style={{ fontSize: '10px', fontWeight: 700, color: '#B45309', marginTop: '4px' }}>
+                        {handoff.reminderSentAt
+                          ? `Reminded ${formatExactTimeAgo(handoff.reminderSentAt, nowMs)}`
+                          : `Reminder triggered (>${reminderThresholdHours}h)`}
+                      </div>
+                    )}
 
                     {isEscalated && (
                       <div style={{ fontSize: '10px', fontWeight: 700, color: '#991B1B', marginTop: '4px' }}>
@@ -563,23 +583,44 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
                         )}
 
                         {isSender && (
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => runAction(card.id, () => onCancelHandoff(card))}
-                            style={{
-                              backgroundColor: '#DC2626',
-                              color: '#ffffff',
-                              border: 'none',
-                              borderRadius: '6px',
-                              padding: '5px 9px',
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Cancel
-                          </button>
+                          <>
+                            {!isEscalated && (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => runAction(card.id, () => onSendReminder(card))}
+                                style={{
+                                  backgroundColor: '#FFFBEB',
+                                  color: '#B45309',
+                                  border: '1px solid #FCD34D',
+                                  borderRadius: '6px',
+                                  padding: '5px 9px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {handoff.reminderSentAt ? 'Re-remind' : 'Remind'}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => runAction(card.id, () => onCancelHandoff(card))}
+                              style={{
+                                backgroundColor: '#DC2626',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: '6px',
+                                padding: '5px 9px',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </>
                         )}
 
                         {isEscalated && isEscalationLead && !handoff.escalationAcknowledgedAt && (
@@ -652,9 +693,11 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
                     ? 'You have no pending handoffs awaiting your response right now.'
                     : scope === 'sent'
                       ? 'You have no outgoing pending handoffs awaiting a response.'
-                      : scope === 'escalated'
-                        ? `Zero escalated handoffs exceeding ${escalationThresholdHours}h.`
-                        : 'No pending handoffs match the active filters.'}
+                      : scope === 'reminded'
+                        ? `Zero unanswered handoffs currently at the ${reminderThresholdHours}h reminder stage.`
+                        : scope === 'escalated'
+                          ? `Zero escalated handoffs exceeding ${escalationThresholdHours}h.`
+                          : 'No pending handoffs match the active filters.'}
                 </td>
               </tr>
             )}

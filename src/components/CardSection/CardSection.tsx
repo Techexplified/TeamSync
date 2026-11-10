@@ -8,17 +8,23 @@ import type {
 import { subscribeToTeamSyncUpdates } from '../../trello/trelloBridge';
 import { OwnerSection } from './OwnerSection';
 import { HandoffSection } from './HandoffSection';
-import { DEFAULT_ESCALATION_THRESHOLD_HOURS, formatExactTimeAgo } from '../../utils/statusUtils';
+import {
+  DEFAULT_ESCALATION_THRESHOLD_HOURS,
+  DEFAULT_REMINDER_THRESHOLD_HOURS,
+  formatExactTimeAgo,
+} from '../../utils/statusUtils';
 import {
   buildAcceptHandoffData,
   buildCancelHandoffData,
   buildDeclineHandoffData,
   buildEscalationData,
+  buildReminderData,
   buildRequestHandoffData,
 } from '../../utils/handoffActions';
 
 interface CardSectionProps {
   context: ITrelloContext;
+  reminderThresholdHours?: number;
   escalationThresholdHours?: number;
   escalationContact?: TeamMember | null;
   onDataChange?: (data: TeamSyncCardData) => void;
@@ -33,6 +39,7 @@ const HISTORY_BADGE_COLORS: Record<
   owner_assigned: { dot: '#2563EB', bg: '#EFF6FF', text: '#1D4ED8', label: 'Owner' },
   owner_removed: { dot: '#DC2626', bg: '#FEE2E2', text: '#B91C1C', label: 'Unassigned' },
   handoff_requested: { dot: '#D97706', bg: '#FEF3C7', text: '#B45309', label: 'Handoff' },
+  handoff_reminded: { dot: '#F59E0B', bg: '#FEF3C7', text: '#92400E', label: 'Reminder' },
   handoff_accepted: { dot: '#059669', bg: '#DCFCE7', text: '#047857', label: 'Accepted' },
   handoff_declined: { dot: '#DC2626', bg: '#FEE2E2', text: '#B91C1C', label: 'Declined' },
   handoff_cancelled: { dot: '#64748B', bg: '#F1F5F9', text: '#475569', label: 'Cancelled' },
@@ -41,6 +48,7 @@ const HISTORY_BADGE_COLORS: Record<
 
 export const CardSection: React.FC<CardSectionProps> = ({
   context,
+  reminderThresholdHours,
   escalationThresholdHours,
   escalationContact,
   onDataChange,
@@ -53,15 +61,20 @@ export const CardSection: React.FC<CardSectionProps> = ({
   });
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [currentMember, setCurrentMember] = useState<TeamMember | null>(null);
+  const [loadedReminderHours, setLoadedReminderHours] = useState<number>(
+    DEFAULT_REMINDER_THRESHOLD_HOURS
+  );
   const [loadedThresholdHours, setLoadedThresholdHours] = useState<number>(
     DEFAULT_ESCALATION_THRESHOLD_HOURS
   );
   const [loadedEscalationContactId, setLoadedEscalationContactId] = useState<string>('');
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
+  const alertedReminderRef = useRef<Set<string>>(new Set());
   const alertedEscalationRef = useRef<Set<string>>(new Set());
   const lastCardJsonRef = useRef<string>('');
 
+  const effectiveReminderHours = reminderThresholdHours ?? loadedReminderHours;
   const thresholdHours = escalationThresholdHours ?? loadedThresholdHours;
   const resolvedEscalationContact =
     escalationContact !== undefined
@@ -84,6 +97,10 @@ export const CardSection: React.FC<CardSectionProps> = ({
         .then(([cardData, memberList, current, settings]) => {
           if (!active) return;
 
+          const resolvedReminderThreshold =
+            reminderThresholdHours ??
+            settings?.reminderThresholdHours ??
+            DEFAULT_REMINDER_THRESHOLD_HOURS;
           const effectiveThreshold =
             escalationThresholdHours ??
             settings?.escalationThresholdHours ??
@@ -96,12 +113,19 @@ export const CardSection: React.FC<CardSectionProps> = ({
                 ? memberList.find((m) => m.id === contactId) || null
                 : null;
 
-          const { nextData, didChange } = buildEscalationData(
+          const { nextData: afterReminderData, didChange: didRemind } = buildReminderData(
             cardData,
+            resolvedReminderThreshold,
+            null
+          );
+
+          const { nextData, didChange: didEscalate } = buildEscalationData(
+            afterReminderData,
             effectiveThreshold,
             contactMember,
             null
           );
+          const didChange = didRemind || didEscalate;
 
           const nextJson = JSON.stringify(nextData);
           if (initialLoad || nextJson !== lastCardJsonRef.current) {
@@ -113,14 +137,33 @@ export const CardSection: React.FC<CardSectionProps> = ({
           setMembers(memberList);
           setCurrentMember(current);
           if (settings) {
+            setLoadedReminderHours(settings.reminderThresholdHours);
             setLoadedThresholdHours(settings.escalationThresholdHours);
             setLoadedEscalationContactId(settings.escalationContactId || '');
           }
 
           if (didChange) {
             context.setCardData(nextData).catch((err) => {
-              console.warn('Could not persist automatic escalation metadata', err);
+              console.warn('Could not persist automatic reminder/escalation metadata', err);
             });
+          }
+
+          if (nextData.handoff?.status === 'pending' && current && nextData.handoff.toMember.id === current.id) {
+            const createdTs = nextData.handoff.createdAt ? new Date(nextData.handoff.createdAt).getTime() : Date.now();
+            const pendingHours = !Number.isNaN(createdTs)
+              ? Math.max(0, (Date.now() - createdTs) / (1000 * 60 * 60))
+              : 0;
+            const reminderKey = `${nextData.handoff.id}:${nextData.handoff.reminderSentAt || 'threshold'}`;
+            if (
+              (pendingHours >= resolvedReminderThreshold || Boolean(nextData.handoff.reminderSentAt)) &&
+              !nextData.handoff.escalatedAt &&
+              !alertedReminderRef.current.has(reminderKey)
+            ) {
+              alertedReminderRef.current.add(reminderKey);
+              context.notify?.(
+                `Reminder: Handoff from ${nextData.handoff.fromMember.fullName} has been waiting ${formatExactTimeAgo(nextData.handoff.createdAt)} for your response.`
+              );
+            }
           }
 
           if (
@@ -168,7 +211,7 @@ export const CardSection: React.FC<CardSectionProps> = ({
       document.removeEventListener('visibilitychange', handleVisibility);
       window.clearInterval(pollTimer);
     };
-  }, [context, escalationThresholdHours, escalationContact]);
+  }, [context, reminderThresholdHours, escalationThresholdHours, escalationContact]);
 
   const updateCardData = async (newData: TeamSyncCardData) => {
     lastCardJsonRef.current = JSON.stringify(newData);
@@ -328,6 +371,24 @@ export const CardSection: React.FC<CardSectionProps> = ({
     context.notify?.('Pending handoff cancelled.');
   };
 
+  // Reminder nudge for unanswered pending handoff
+  const handleSendReminder = async () => {
+    const { nextData, didChange } = buildReminderData(
+      data,
+      effectiveReminderHours,
+      currentMember,
+      { forceRemind: true }
+    );
+    if (!didChange) return;
+
+    await updateCardData(nextData);
+    context.notify?.(
+      data.handoff?.toMember
+        ? `Reminder sent to ${data.handoff.toMember.fullName}`
+        : 'Recipient reminded about pending handoff'
+    );
+  };
+
   // P1: Escalation — Notify Lead & Acknowledge
   const handleNotifyEscalation = async () => {
     const { nextData, didChange } = buildEscalationData(
@@ -377,6 +438,7 @@ export const CardSection: React.FC<CardSectionProps> = ({
     if (historyFilter === 'handoffs') {
       return (
         item.type === 'handoff_requested' ||
+        item.type === 'handoff_reminded' ||
         item.type === 'handoff_accepted' ||
         item.type === 'handoff_declined' ||
         item.type === 'handoff_cancelled'
@@ -407,12 +469,14 @@ export const CardSection: React.FC<CardSectionProps> = ({
         owner={data.owner}
         members={members}
         currentMember={currentMember}
+        reminderThresholdHours={effectiveReminderHours}
         escalationThresholdHours={thresholdHours}
         escalationContact={resolvedEscalationContact}
         onRequestHandoff={handleRequestHandoff}
         onAcceptHandoff={handleAcceptHandoff}
         onDeclineHandoff={handleDeclineHandoff}
         onCancelHandoff={handleCancelHandoff}
+        onSendReminder={handleSendReminder}
         onNotifyEscalation={handleNotifyEscalation}
         onAcknowledgeEscalation={handleAcknowledgeEscalation}
       />

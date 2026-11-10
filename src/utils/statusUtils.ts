@@ -8,10 +8,11 @@ import type {
   TaskLifecycleStatus,
 } from '../types/teamsync';
 
+export const DEFAULT_REMINDER_THRESHOLD_HOURS = 12;
 export const DEFAULT_ESCALATION_THRESHOLD_HOURS = 24;
 
 export const DEFAULT_SETTINGS: TeamSyncSettings = {
-  reminderThresholdHours: 12,
+  reminderThresholdHours: DEFAULT_REMINDER_THRESHOLD_HOURS,
   escalationThresholdHours: DEFAULT_ESCALATION_THRESHOLD_HOURS,
   escalationContactId: '',
 };
@@ -302,19 +303,22 @@ export interface HandoffDisplayInfo {
   label: string;
   tooltip: string;
   hoursPending: number;
+  reminded?: boolean;
+  reminderSentAt?: string;
   exactAgo?: string;
   fromName?: string;
   toName?: string;
 }
 
 /**
- * Computes handoff column presentation with live elapsed timer and escalation status.
+ * Computes handoff column presentation with live elapsed timer, reminder, and escalation status.
  */
 export function getCardHandoffDisplay(
   card: BoardCardSummary,
   escalationThresholdHours: number = DEFAULT_ESCALATION_THRESHOLD_HOURS,
   escalationContactName?: string,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
+  reminderThresholdHours: number = DEFAULT_REMINDER_THRESHOLD_HOURS
 ): HandoffDisplayInfo {
   const handoff = card.data.handoff;
 
@@ -325,6 +329,7 @@ export function getCardHandoffDisplay(
         ? Math.max(0, Math.round(((nowMs - createdTs) / (1000 * 60 * 60)) * 10) / 10)
         : 0;
     const escalated = hours >= escalationThresholdHours;
+    const reminded = !escalated && (hours >= reminderThresholdHours || Boolean(handoff.reminderSentAt));
     const sender = handoff.fromMember?.fullName || card.data.owner?.fullName || 'Owner';
     const recipient = handoff.toMember?.fullName || 'Teammate';
     const exactAgo = formatExactTimeAgo(handoff.createdAt, nowMs);
@@ -333,11 +338,19 @@ export function getCardHandoffDisplay(
       : '';
     return {
       state: escalated ? 'escalated' : 'pending',
-      label: escalated ? `Escalated (${formatCompactHours(hours)})` : 'Pending',
+      label: escalated
+        ? `Escalated (${formatCompactHours(hours)})`
+        : reminded
+          ? `Reminded (${formatCompactHours(hours)})`
+          : 'Pending',
       tooltip: escalated
         ? `Escalated: ${sender} → ${recipient} waiting ${exactAgo} (>${escalationThresholdHours}h threshold). Owner stays accountable until accepted.${leadNote}`
-        : `Handoff requested: ${sender} → ${recipient} (${exactAgo}). Waiting for acceptance.`,
+        : reminded
+          ? `Reminder sent to ${recipient}: handoff from ${sender} waiting ${exactAgo} (>${reminderThresholdHours}h reminder threshold).`
+          : `Handoff requested: ${sender} → ${recipient} (${exactAgo}). Waiting for acceptance.`,
       hoursPending: hours,
+      reminded,
+      reminderSentAt: handoff.reminderSentAt,
       exactAgo,
       fromName: sender,
       toName: recipient,

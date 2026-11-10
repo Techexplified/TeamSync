@@ -7,7 +7,7 @@ import type {
 } from '../../types/teamsync';
 import { formatExactTimeAgo } from '../../utils/statusUtils';
 
-export type HistoryCategoryFilter = 'all' | 'ownership' | 'requests' | 'responses' | 'escalations';
+export type HistoryCategoryFilter = 'all' | 'ownership' | 'requests' | 'reminders' | 'responses' | 'escalations';
 
 interface BoardHistoryEntry {
   cardId: string;
@@ -33,6 +33,7 @@ const EVENT_BADGE_MAP: Record<
   owner_assigned: { dot: '#2563EB', bg: '#EFF6FF', text: '#1D4ED8', label: 'Owner Assigned' },
   owner_removed: { dot: '#DC2626', bg: '#FEE2E2', text: '#B91C1C', label: 'Unassigned' },
   handoff_requested: { dot: '#D97706', bg: '#FEF3C7', text: '#B45309', label: 'Handoff Sent' },
+  handoff_reminded: { dot: '#F59E0B', bg: '#FEF3C7', text: '#92400E', label: 'Reminder Sent' },
   handoff_accepted: { dot: '#059669', bg: '#DCFCE7', text: '#047857', label: 'Accepted' },
   handoff_declined: { dot: '#DC2626', bg: '#FEE2E2', text: '#B91C1C', label: 'Declined' },
   handoff_cancelled: { dot: '#64748B', bg: '#F1F5F9', text: '#475569', label: 'Cancelled' },
@@ -74,12 +75,14 @@ export const HistoryFeedPanel: React.FC<HistoryFeedPanelProps> = ({
   const counts = useMemo(() => {
     let ownership = 0;
     let requests = 0;
+    let reminders = 0;
     let responses = 0;
     let escalations = 0;
 
     for (const { item } of allEntries) {
       if (item.type === 'owner_assigned' || item.type === 'owner_removed') ownership++;
       else if (item.type === 'handoff_requested') requests++;
+      else if (item.type === 'handoff_reminded') reminders++;
       else if (
         item.type === 'handoff_accepted' ||
         item.type === 'handoff_declined' ||
@@ -95,6 +98,7 @@ export const HistoryFeedPanel: React.FC<HistoryFeedPanelProps> = ({
       all: allEntries.length,
       ownership,
       requests,
+      reminders,
       responses,
       escalations,
     };
@@ -112,6 +116,9 @@ export const HistoryFeedPanel: React.FC<HistoryFeedPanelProps> = ({
         return false;
       }
       if (category === 'requests' && item.type !== 'handoff_requested') {
+        return false;
+      }
+      if (category === 'reminders' && item.type !== 'handoff_reminded') {
         return false;
       }
       if (
@@ -201,6 +208,7 @@ export const HistoryFeedPanel: React.FC<HistoryFeedPanelProps> = ({
               { id: 'all' as const, label: `All Events (${counts.all})` },
               { id: 'ownership' as const, label: `Ownership Changes (${counts.ownership})` },
               { id: 'requests' as const, label: `Handoff Requests (${counts.requests})` },
+              { id: 'reminders' as const, label: `Reminders (${counts.reminders})` },
               { id: 'responses' as const, label: `Accept / Decline (${counts.responses})` },
               { id: 'escalations' as const, label: `Escalations (${counts.escalations})` },
             ] as const

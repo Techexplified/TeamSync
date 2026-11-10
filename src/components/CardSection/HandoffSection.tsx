@@ -9,19 +9,25 @@ import {
   SendIcon,
   ClockIcon,
 } from '../common/Icons';
-import { formatExactTimeAgo, DEFAULT_ESCALATION_THRESHOLD_HOURS } from '../../utils/statusUtils';
+import {
+  formatExactTimeAgo,
+  DEFAULT_ESCALATION_THRESHOLD_HOURS,
+  DEFAULT_REMINDER_THRESHOLD_HOURS,
+} from '../../utils/statusUtils';
 
 interface HandoffSectionProps {
   handoff: TaskHandoff | null;
   owner: TaskOwner | null;
   members: TeamMember[];
   currentMember: TeamMember | null;
+  reminderThresholdHours?: number;
   escalationThresholdHours?: number;
   escalationContact?: TeamMember | null;
   onRequestHandoff: (toMember: TeamMember, note: string) => Promise<void>;
   onAcceptHandoff: () => Promise<void>;
   onDeclineHandoff: (reason: string) => Promise<void>;
   onCancelHandoff: () => Promise<void>;
+  onSendReminder?: () => Promise<void>;
   onNotifyEscalation?: () => Promise<void>;
   onAcknowledgeEscalation?: () => Promise<void>;
 }
@@ -31,12 +37,14 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
   owner,
   members,
   currentMember,
+  reminderThresholdHours = DEFAULT_REMINDER_THRESHOLD_HOURS,
   escalationThresholdHours = DEFAULT_ESCALATION_THRESHOLD_HOURS,
   escalationContact = null,
   onRequestHandoff,
   onAcceptHandoff,
   onDeclineHandoff,
   onCancelHandoff,
+  onSendReminder,
   onNotifyEscalation,
   onAcknowledgeEscalation,
 }) => {
@@ -63,6 +71,9 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
       ? Math.max(0, (nowMs - createdTimeMs) / (1000 * 60 * 60))
       : 0;
   const isEscalated = isPending && hoursPending >= escalationThresholdHours;
+  const hasReminderBeenSent =
+    isPending && (hoursPending >= reminderThresholdHours || Boolean(handoff?.reminderSentAt));
+  const isRemindedOnly = hasReminderBeenSent && !isEscalated;
   const isRecipient = handoff && currentMember && handoff.toMember.id === currentMember.id;
   const isSender = handoff && currentMember && handoff.fromMember.id === currentMember.id;
 
@@ -145,7 +156,7 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
             style={{
               width: '6px',
               height: '16px',
-              backgroundColor: isEscalated ? '#DE350B' : isPending ? '#FFAB00' : isDeclined ? '#BF2600' : '#4C9AFF',
+              backgroundColor: isEscalated ? '#DE350B' : isRemindedOnly ? '#D97706' : isPending ? '#FFAB00' : isDeclined ? '#BF2600' : '#4C9AFF',
               borderRadius: '2px',
             }}
           />
@@ -156,7 +167,8 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
         </div>
 
         {isEscalated && <Badge status="needs_attention" label={`Escalated (>${escalationThresholdHours}h)`} />}
-        {isPending && !isEscalated && <Badge status="handoff_pending" label="Pending Response" />}
+        {isRemindedOnly && <Badge status="handoff_pending" label={`Reminder Sent`} />}
+        {isPending && !isEscalated && !isRemindedOnly && <Badge status="handoff_pending" label="Pending Response" />}
         {isDeclined && <Badge status="needs_owner" label="Handoff Declined" />}
       </div>
 
@@ -165,11 +177,77 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
         <div
           style={{
             backgroundColor: isEscalated ? '#FFF5F5' : '#FFFAE6',
-            border: isEscalated ? '1px solid #FCA5A5' : '1px solid #FFE380',
+            border: isEscalated ? '1px solid #FCA5A5' : isRemindedOnly ? '1px solid #F59E0B' : '1px solid #FFE380',
             borderRadius: '6px',
             padding: '12px',
           }}
         >
+          {isRemindedOnly && handoff && (
+            <div
+              style={{
+                backgroundColor: '#FEF3C7',
+                border: '1px solid #FCD34D',
+                color: '#92400E',
+                borderRadius: '6px',
+                padding: '8px 10px',
+                fontSize: '11px',
+                marginBottom: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                <div style={{ fontWeight: 700, lineHeight: 1.4 }}>
+                  {isRecipient ? (
+                    <>
+                      Reminder: Handoff awaiting your response ({formatExactTimeAgo(handoff.createdAt, nowMs)}).
+                    </>
+                  ) : (
+                    <>
+                      Reminder sent to <strong>{handoff.toMember.fullName}</strong>
+                      {handoff.reminderSentAt
+                        ? ` (${formatExactTimeAgo(handoff.reminderSentAt, nowMs)})`
+                        : ` (>${reminderThresholdHours}h unanswered)`}
+                    </>
+                  )}
+                </div>
+
+                {isSender && onSendReminder && (
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={async () => {
+                      setSubmitting(true);
+                      try {
+                        await onSendReminder();
+                      } finally {
+                        setSubmitting(false);
+                      }
+                    }}
+                    style={{
+                      backgroundColor: '#ffffff',
+                      color: '#92400E',
+                      border: '1px solid #F59E0B',
+                      borderRadius: '4px',
+                      padding: '3px 8px',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Re-send Reminder
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize: '11px', color: '#78350F', marginTop: '3px' }}>
+                {isRecipient
+                  ? `Please accept or decline below so ${handoff.fromMember.fullName} knows whether ownership transfers.`
+                  : `Auto-triggers after ${reminderThresholdHours}h without a response${
+                      handoff.reminderCount && handoff.reminderCount > 1
+                        ? ` (${handoff.reminderCount} reminders sent)`
+                        : ''
+                    }.`}
+              </div>
+            </div>
+          )}
           {isEscalated && handoff && (
             <div
               style={{
@@ -448,23 +526,51 @@ export const HandoffSection: React.FC<HandoffSectionProps> = ({
               <span style={{ fontSize: '11px', color: '#7A4B00' }}>
                 Waiting for <strong>{handoff.toMember.fullName}</strong> to accept. You remain accountable until accepted.
               </span>
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={handleCancel}
-                style={{
-                  backgroundColor: '#DC2626',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  padding: '5px 10px',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel Handoff
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {onSendReminder && !isRemindedOnly && (
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={async () => {
+                      setSubmitting(true);
+                      try {
+                        await onSendReminder();
+                      } finally {
+                        setSubmitting(false);
+                      }
+                    }}
+                    style={{
+                      backgroundColor: '#ffffff',
+                      color: '#B45309',
+                      border: '1px solid #F59E0B',
+                      borderRadius: '4px',
+                      padding: '5px 10px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {handoff.reminderSentAt ? 'Re-send Reminder' : 'Send Reminder'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={handleCancel}
+                  style={{
+                    backgroundColor: '#DC2626',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '5px 10px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel Handoff
+                </button>
+              </div>
             </div>
           ) : (
             <div style={{ fontSize: '11px', color: '#7A4B00' }}>

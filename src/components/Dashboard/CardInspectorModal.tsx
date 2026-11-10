@@ -211,7 +211,7 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
                   cursor: 'pointer',
                 }}
               >
-                Open in Trello &nearr;
+                Open in Trello
               </button>
             )}
 
@@ -332,6 +332,7 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
           <CardSection
             key={card.id}
             context={scopedContext}
+            reminderThresholdHours={settings.reminderThresholdHours}
             escalationThresholdHours={settings.escalationThresholdHours}
             escalationContact={escalationContact}
             onDataChange={() => onUpdated()}

@@ -180,6 +180,64 @@ export function buildCancelHandoffData(
   };
 }
 
+export function buildReminderData(
+  data: TeamSyncCardData,
+  reminderThresholdHours: number,
+  actor?: TeamMember | null,
+  options?: { forceRemind?: boolean }
+): { nextData: TeamSyncCardData; didChange: boolean } {
+  const ho = data.handoff;
+  if (!ho || ho.status !== 'pending') {
+    return { nextData: data, didChange: false };
+  }
+
+  const nowMs = Date.now();
+  const createdMs = ho.createdAt ? new Date(ho.createdAt).getTime() : nowMs;
+  const elapsedHours = !Number.isNaN(createdMs) ? Math.max(0, (nowMs - createdMs) / (1000 * 60 * 60)) : 0;
+
+  if (!options?.forceRemind) {
+    if (elapsedHours < reminderThresholdHours || Boolean(ho.reminderSentAt)) {
+      return { nextData: data, didChange: false };
+    }
+  }
+
+  const now = new Date(nowMs).toISOString();
+  const actorInfo = actor
+    ? { id: actor.id, fullName: actor.fullName }
+    : { id: 'system_teamsync_reminder', fullName: 'TeamSync Reminder' };
+  const elapsedLabel = formatDurationMs(nowMs - createdMs);
+  const nextCount = (ho.reminderCount || (ho.reminderSentAt ? 1 : 0)) + 1;
+
+  const summary = options?.forceRemind
+    ? `${actorInfo.fullName} reminded ${ho.toMember.fullName} about unanswered handoff (waiting ${elapsedLabel})`
+    : `Reminder sent to ${ho.toMember.fullName}: handoff from ${ho.fromMember.fullName} unanswered after ${reminderThresholdHours}h (${elapsedLabel})`;
+
+  const entry: ResponsibilityHistoryItem = {
+    id: nextHistoryId('hist_rem'),
+    type: 'handoff_reminded',
+    actor: actorInfo,
+    timestamp: now,
+    summary,
+    meta: {
+      fromMemberName: ho.fromMember.fullName,
+      toMemberName: ho.toMember.fullName,
+    },
+  };
+
+  return {
+    didChange: true,
+    nextData: {
+      ...data,
+      handoff: {
+        ...ho,
+        reminderSentAt: now,
+        reminderCount: nextCount,
+      },
+      history: [entry, ...data.history],
+    },
+  };
+}
+
 export function buildEscalationData(
   data: TeamSyncCardData,
   escalationThresholdHours: number,

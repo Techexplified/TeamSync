@@ -509,10 +509,10 @@ export function initTrelloConnector() {
         t.get('board', 'shared', 'teamsync_settings').catch(() => undefined),
       ]);
 
-      const thresholdHours =
-        settingsRaw && typeof settingsRaw === 'object' && 'escalationThresholdHours' in settingsRaw
-          ? Number((settingsRaw as TeamSyncSettings).escalationThresholdHours) || 24
-          : 24;
+      const settingsObj =
+        settingsRaw && typeof settingsRaw === 'object' ? (settingsRaw as Partial<TeamSyncSettings>) : {};
+      const reminderHours = Number(settingsObj.reminderThresholdHours) || 12;
+      const thresholdHours = Number(settingsObj.escalationThresholdHours) || 24;
 
       if (!data || !data.owner) {
         return [{
@@ -530,6 +530,13 @@ export function initTrelloConnector() {
           return [{
             text: `🚨 Escalated → ${recipientName}`,
             color: 'red',
+          }];
+        }
+
+        if (elapsedHours >= reminderHours || Boolean(data.handoff.reminderSentAt)) {
+          return [{
+            text: `🔔 Reminder → ${recipientName}`,
+            color: 'orange',
           }];
         }
 
@@ -553,6 +560,7 @@ export function initTrelloConnector() {
 
       const settingsObj =
         settingsRaw && typeof settingsRaw === 'object' ? (settingsRaw as Partial<TeamSyncSettings>) : {};
+      const reminderHours = Number(settingsObj.reminderThresholdHours) || 12;
       const thresholdHours = Number(settingsObj.escalationThresholdHours) || 24;
       const contactId = settingsObj.escalationContactId || '';
 
@@ -576,13 +584,16 @@ export function initTrelloConnector() {
         const createdMs = data.handoff.createdAt ? new Date(data.handoff.createdAt).getTime() : Date.now();
         const elapsedHours = (Date.now() - createdMs) / (1000 * 60 * 60);
         const escalated = elapsedHours >= thresholdHours;
+        const reminded = !escalated && (elapsedHours >= reminderHours || Boolean(data.handoff.reminderSentAt));
 
         badges.push({
-          title: escalated ? 'Escalated Handoff' : 'Handoff Status',
+          title: escalated ? 'Escalated Handoff' : reminded ? 'Handoff Reminder Sent' : 'Handoff Status',
           text: escalated
             ? `Needs Attention (${data.handoff.toMember.fullName})`
-            : `Pending (${data.handoff.toMember.fullName})`,
-          color: escalated ? 'red' : 'yellow',
+            : reminded
+              ? `Reminder Sent (${data.handoff.toMember.fullName})`
+              : `Pending (${data.handoff.toMember.fullName})`,
+          color: escalated ? 'red' : reminded ? 'orange' : 'yellow',
         });
 
         if (escalated && (contactId || data.handoff.escalationNotifiedTo?.fullName)) {

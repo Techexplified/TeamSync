@@ -27,6 +27,7 @@ import {
   buildCancelHandoffData,
   buildDeclineHandoffData,
   buildEscalationData,
+  buildReminderData,
 } from '../../utils/handoffActions';
 import { SettingsPanel } from './SettingsPanel';
 import { CardInspectorModal } from './CardInspectorModal';
@@ -97,7 +98,9 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   const [exportFeedback, setExportFeedback] = useState<string | null>(null);
   const [inspectedCardId, setInspectedCardId] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const autoRemindedKeysRef = useRef<Set<string>>(new Set());
   const autoEscalatedKeysRef = useRef<Set<string>>(new Set());
+  const recipientRemindedKeysRef = useRef<Set<string>>(new Set());
   const managerAlertedIdsRef = useRef<Set<string>>(new Set());
   const syncSeqRef = useRef(0);
   const inFlightCountRef = useRef(0);
@@ -125,26 +128,79 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
     const processedCards = boardCards.map((card) => {
       if (card.data.handoff?.status !== 'pending') return card;
+
+      let workingData = card.data;
+      let changed = false;
+
+      const reminderKey = `${card.id}:${card.data.handoff.id}`;
+      if (!autoRemindedKeysRef.current.has(reminderKey)) {
+        const { nextData: remindedData, didChange: didRemind } = buildReminderData(
+          workingData,
+          loadedSettings.reminderThresholdHours,
+          null
+        );
+        if (didRemind) {
+          autoRemindedKeysRef.current.add(reminderKey);
+          workingData = remindedData;
+          changed = true;
+        }
+      }
+
       const syncKey = `${card.id}:${card.data.handoff.id}:${escalationContactMember?.id || 'none'}`;
-      if (autoEscalatedKeysRef.current.has(syncKey)) return card;
+      if (!autoEscalatedKeysRef.current.has(syncKey)) {
+        const { nextData: escalatedData, didChange: didEscalate } = buildEscalationData(
+          workingData,
+          loadedSettings.escalationThresholdHours,
+          escalationContactMember,
+          null
+        );
+        if (didEscalate) {
+          autoEscalatedKeysRef.current.add(syncKey);
+          workingData = escalatedData;
+          changed = true;
+        }
+      }
 
-      const { nextData, didChange } = buildEscalationData(
-        card.data,
-        loadedSettings.escalationThresholdHours,
-        escalationContactMember,
-        null
-      );
-
-      if (didChange) {
-        autoEscalatedKeysRef.current.add(syncKey);
-        context.setCardData(nextData, card.id).catch((err) => {
-          console.warn('Failed to persist auto-escalation state for card', card.id, err);
+      if (changed) {
+        context.setCardData(workingData, card.id).catch((err) => {
+          console.warn('Failed to persist auto reminder/escalation state for card', card.id, err);
         });
-        return { ...card, data: nextData };
+        return { ...card, data: workingData };
       }
 
       return card;
     });
+
+    if (current) {
+      const nowTs = Date.now();
+      const newlyRemindedForMe = processedCards.filter((card) => {
+        const ho = card.data.handoff;
+        if (!ho || ho.status !== 'pending' || ho.toMember.id !== current.id) {
+          return false;
+        }
+        const createdTs = ho.createdAt ? new Date(ho.createdAt).getTime() : nowTs;
+        const hrs = !Number.isNaN(createdTs) ? Math.max(0, (nowTs - createdTs) / (1000 * 60 * 60)) : 0;
+        if (hrs < loadedSettings.reminderThresholdHours && !ho.reminderSentAt) {
+          return false;
+        }
+        const notifKey = `${ho.id}:${ho.reminderSentAt || 'threshold'}`;
+        return !recipientRemindedKeysRef.current.has(notifKey);
+      });
+
+      if (newlyRemindedForMe.length > 0) {
+        for (const c of newlyRemindedForMe) {
+          const ho = c.data.handoff;
+          if (ho) {
+            recipientRemindedKeysRef.current.add(`${ho.id}:${ho.reminderSentAt || 'threshold'}`);
+          }
+        }
+        context.notify?.(
+          newlyRemindedForMe.length === 1
+            ? `Reminder: "${newlyRemindedForMe[0].name}" handoff from ${newlyRemindedForMe[0].data.handoff?.fromMember.fullName} awaits your response`
+            : `Reminder: ${newlyRemindedForMe.length} unanswered handoffs await your response`
+        );
+      }
+    }
 
     if (escalationContactMember && current?.id === escalationContactMember.id) {
       const newlyAlerted = processedCards.filter((card) => {
@@ -324,6 +380,17 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
     [escalatedPendingCards]
   );
 
+  const myRemindedPendingCards = useMemo(() => {
+    if (!currentMember) return [];
+    return cards.filter((c) => {
+      const ho = c.data.handoff;
+      if (!ho || ho.status !== 'pending' || ho.toMember.id !== currentMember.id) return false;
+      const createdTs = ho.createdAt ? new Date(ho.createdAt).getTime() : nowMs;
+      const hours = !Number.isNaN(createdTs) ? Math.max(0, (nowMs - createdTs) / (1000 * 60 * 60)) : 0;
+      return hours >= settings.reminderThresholdHours || Boolean(ho.reminderSentAt);
+    });
+  }, [cards, currentMember, settings.reminderThresholdHours, nowMs]);
+
   const myPendingCount = useMemo(() => {
     if (!currentMember) return 0;
     return cards.filter(
@@ -498,6 +565,23 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
     await loadData({ silent: true });
   };
 
+  const handleInlineSendReminder = async (card: BoardCardSummary) => {
+    const { nextData, didChange } = buildReminderData(
+      card.data,
+      settings.reminderThresholdHours,
+      currentMember,
+      { forceRemind: true }
+    );
+    if (!didChange) return;
+    await context.setCardData(nextData, card.id);
+    context.notify?.(
+      card.data.handoff?.toMember
+        ? `Reminder sent to ${card.data.handoff.toMember.fullName} for "${card.name}"`
+        : `Reminder sent for "${card.name}"`
+    );
+    await loadData({ silent: true });
+  };
+
   const handleInlineNotifyEscalation = async (card: BoardCardSummary) => {
     const { nextData, didChange } = buildEscalationData(
       card.data,
@@ -553,7 +637,13 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
     const exportSource = sortedCards.length > 0 ? sortedCards : cards;
     const rows = exportSource.map((c) => {
-      const ho = getCardHandoffDisplay(c, settings.escalationThresholdHours);
+      const ho = getCardHandoffDisplay(
+        c,
+        settings.escalationThresholdHours,
+        escalationContact?.fullName,
+        nowMs,
+        settings.reminderThresholdHours
+      );
       return [
         escapeCsv(c.name),
         escapeCsv(c.listName),
@@ -1240,6 +1330,93 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
               </ul>
             </div> */}
 
+            {/* 4A. RECIPIENT REMINDER BANNER */}
+            {myRemindedPendingCards.length > 0 && currentMember && (
+              <div
+                style={{
+                  backgroundColor: '#FFFBEB',
+                  border: '1.5px solid #FCD34D',
+                  borderRadius: '12px',
+                  padding: '12px 16px',
+                  marginBottom: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '12px',
+                }}
+              >
+                <div style={{ flex: '1 1 360px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                    <span
+                      style={{
+                        backgroundColor: '#D97706',
+                        color: '#ffffff',
+                        fontSize: '10px',
+                        fontWeight: 800,
+                        padding: '2px 7px',
+                        borderRadius: '6px',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.4px',
+                      }}
+                    >
+                      Reminder
+                    </span>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#78350F' }}>
+                      Hey {currentMember.fullName}: {myRemindedPendingCards.length} unanswered handoff
+                      {myRemindedPendingCards.length > 1 ? 's await' : ' awaits'} your response
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                    {myRemindedPendingCards.slice(0, 3).map((c) => {
+                      const ho = c.data.handoff!;
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => setInspectedCardId(c.id)}
+                          style={{
+                            backgroundColor: '#ffffff',
+                            border: '1px solid #FCD34D',
+                            color: '#92400E',
+                            borderRadius: '6px',
+                            padding: '3px 8px',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {c.name}: from {ho.fromMember.fullName} ({formatExactTimeAgo(ho.createdAt, nowMs)})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingScope('mine');
+                    setActiveTab('pending');
+                  }}
+                  style={{
+                    backgroundColor: '#D97706',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  Respond Now &rarr;
+                </button>
+              </div>
+            )}
+
             {/* 4B. ESCALATION ALERT BANNER (P1 Escalation & Manager Notification) */}
             {escalatedPendingCards.length > 0 && (() => {
               const isManager = Boolean(
@@ -1905,7 +2082,8 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                         card,
                         settings.escalationThresholdHours,
                         escalationContact?.fullName,
-                        nowMs
+                        nowMs,
+                        settings.reminderThresholdHours
                       );
                       const ho = card.data.handoff;
 
@@ -2027,7 +2205,8 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                                     alignItems: 'center',
                                     gap: '4px',
                                     backgroundColor: '#FEF3C7',
-                                    color: '#B45309',
+                                    border: handoff.reminded ? '1px solid #F59E0B' : 'none',
+                                    color: handoff.reminded ? '#92400E' : '#B45309',
                                     fontSize: '11px',
                                     fontWeight: 700,
                                     padding: '3px 8px',
@@ -2035,7 +2214,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
-                                  <span>⇄</span> Pending &bull; {handoff.exactAgo}
+                                  <span>{handoff.reminded ? '🔔' : '⇄'}</span> {handoff.reminded ? 'Reminded' : 'Pending'} &bull; {handoff.exactAgo}
                                 </span>
                                 <div style={{ fontSize: '10px', color: '#64748B', fontWeight: 500, marginTop: '3px' }}>
                                   {ho.fromMember.fullName.split(' ')[0]} &rarr; {ho.toMember.fullName.split(' ')[0]}
@@ -2118,6 +2297,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                 cards={cards}
                 currentMember={currentMember}
                 escalationContact={escalationContact}
+                reminderThresholdHours={settings.reminderThresholdHours}
                 escalationThresholdHours={settings.escalationThresholdHours}
                 nowMs={nowMs}
                 search={search}
@@ -2128,6 +2308,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                 onAcceptHandoff={handleInlineAcceptHandoff}
                 onDeclineHandoff={handleInlineDeclineHandoff}
                 onCancelHandoff={handleInlineCancelHandoff}
+                onSendReminder={handleInlineSendReminder}
                 onNotifyEscalation={handleInlineNotifyEscalation}
                 onAcknowledgeEscalation={handleInlineAcknowledgeEscalation}
                 onOpenSettings={() => setActiveNav('settings')}
@@ -2277,36 +2458,47 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
                           {incomingHandoffs
                             .filter((h) => !memberTasks.some((mt) => mt.id === h.id))
-                            .map((h) => (
-                              <div
-                                key={`ho_${h.id}`}
-                                onClick={() => setInspectedCardId(h.id)}
-                                title={h.name}
-                                style={{
-                                  padding: '8px 10px',
-                                  backgroundColor: '#FFFBEB',
-                                  border: '1px solid #FDE68A',
-                                  borderRadius: '6px',
-                                  fontSize: '12px',
-                                  fontWeight: 600,
-                                  color: '#92400E',
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  gap: '8px',
-                                  minWidth: 0,
-                                  overflow: 'hidden',
-                                }}
-                              >
-                                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  ⇄ Accept: {h.name}
-                                </span>
-                                <span style={{ fontSize: '10px', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                                  from {h.data.handoff?.fromMember.fullName.split(' ')[0]}
-                                </span>
-                              </div>
-                            ))}
+                            .map((h) => {
+                              const ho = h.data.handoff;
+                              const createdTs = ho?.createdAt ? new Date(ho.createdAt).getTime() : nowMs;
+                              const hours = !Number.isNaN(createdTs) ? Math.max(0, (nowMs - createdTs) / (1000 * 60 * 60)) : 0;
+                              const isRemindedIncoming =
+                                Boolean(ho?.reminderSentAt) || hours >= settings.reminderThresholdHours;
+                              return (
+                                <div
+                                  key={`ho_${h.id}`}
+                                  onClick={() => setInspectedCardId(h.id)}
+                                  title={
+                                    isRemindedIncoming
+                                      ? `${h.name} — Reminder sent (awaiting your response)`
+                                      : h.name
+                                  }
+                                  style={{
+                                    padding: '8px 10px',
+                                    backgroundColor: isRemindedIncoming ? '#FEF3C7' : '#FFFBEB',
+                                    border: isRemindedIncoming ? '1px solid #F59E0B' : '1px solid #FDE68A',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    color: '#92400E',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: '8px',
+                                    minWidth: 0,
+                                    overflow: 'hidden',
+                                  }}
+                                >
+                                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {isRemindedIncoming ? '🔔' : '⇄'} Accept: {h.name}
+                                  </span>
+                                  <span style={{ fontSize: '10px', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                                    from {h.data.handoff?.fromMember.fullName.split(' ')[0]}
+                                  </span>
+                                </div>
+                              );
+                            })}
 
                           {memberTasks.length === 0 && incomingHandoffs.length === 0 && (
                             <div style={{ fontSize: '12px', color: '#94A3B8', fontStyle: 'italic', padding: '4px 0' }}>

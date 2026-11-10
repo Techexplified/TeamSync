@@ -166,6 +166,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   </button>
                 ))}
               </div>
+              <div style={{ fontSize: '11px', color: draft.reminderThresholdHours >= draft.escalationThresholdHours ? '#B45309' : '#64748B', marginTop: '6px' }}>
+                {draft.reminderThresholdHours >= draft.escalationThresholdHours
+                  ? 'Tip: Set shorter than Escalation Threshold so recipients are reminded before escalation.'
+                  : `Reminds pending recipients across card badges, dashboard banners, and history after ${draft.reminderThresholdHours}h unanswered.`}
+              </div>
             </div>
 
             {/* Escalation Threshold */}

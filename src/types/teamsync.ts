@@ -36,6 +36,7 @@ export interface TaskHandoff {
   resolvedAt?: string;
   declineReason?: string;
   reminderSentAt?: string;
+  reminderCount?: number;
   escalatedAt?: string;
   escalationNotifiedAt?: string;
   escalationNotifiedTo?: {
@@ -53,6 +54,7 @@ export type HistoryEventType =
   | 'owner_assigned'
   | 'owner_removed'
   | 'handoff_requested'
+  | 'handoff_reminded'
   | 'handoff_accepted'
   | 'handoff_declined'
   | 'handoff_cancelled'
