@@ -188,9 +188,11 @@ export const CardInspectorModal: React.FC<CardInspectorModalProps> = ({
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A', lineHeight: 1.3 }}>
               {card.name}
             </h2>
-            <div style={{ fontSize: '12px', color: overdue ? '#DC2626' : '#64748B', fontWeight: overdue ? 600 : 500, marginTop: '4px' }}>
-              Due: {deadlineText}
-            </div>
+            {(card.due || card.data.deadline) && (
+              <div style={{ fontSize: '12px', color: overdue ? '#DC2626' : '#64748B', fontWeight: overdue ? 600 : 500, marginTop: '4px' }}>
+                Due: {deadlineText}
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>

@@ -334,15 +334,17 @@ export const PendingActionsPanel: React.FC<PendingActionsPanelProps> = ({
                       >
                         {card.listName}
                       </span>
-                      <span
-                        style={{
-                          fontSize: '10px',
-                          fontWeight: 600,
-                          color: overdue ? '#DC2626' : '#64748B',
-                        }}
-                      >
-                        Due: {formatCardDeadline(card)}
-                      </span>
+                      {(card.due || card.data.deadline) && (
+                        <span
+                          style={{
+                            fontSize: '10px',
+                            fontWeight: 600,
+                            color: overdue ? '#DC2626' : '#64748B',
+                          }}
+                        >
+                          Due: {formatCardDeadline(card)}
+                        </span>
+                      )}
                     </div>
                   </td>
 

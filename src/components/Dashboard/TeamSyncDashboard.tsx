@@ -14,14 +14,12 @@ import {
   formatExactTimeAgo,
   formatRelativeSyncTime,
   // generateRealtimeAiSummary,
-  getCardDeadlineTimestamp,
   getCardHandoffDisplay,
   getCardLifecycleStatus,
   getCardPriority,
   getMemberColor,
   getMemberInitials,
   isCardCompleted,
-  isCardOverdue,
   matchesDeadlineFilter,
 } from '../../utils/statusUtils';
 import {
@@ -41,7 +39,21 @@ interface TeamSyncDashboardProps {
   onDataSynced?: () => void;
 }
 
-type SortField = 'name' | 'owner' | 'deadline' | 'status' | 'handoff';
+type SortField = 'name' | 'owner' | 'status' | 'handoff';
+
+function getDashboardCardStatus(card: BoardCardSummary): 'In Progress' | 'To Do' | 'Done' {
+  const raw = getCardLifecycleStatus(card);
+  if (raw !== 'Overdue') return raw;
+  if (
+    card.data.trelloStatus === 'To Do' ||
+    (!card.data.trelloStatus &&
+      card.listName &&
+      /\b(to\s*do|backlog|icebox|queue|upcoming)\b/i.test(card.listName))
+  ) {
+    return 'To Do';
+  }
+  return 'In Progress';
+}
 
 export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   context,
@@ -73,7 +85,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   const [onlyPendingTasks, setOnlyPendingTasks] = useState(false);
   const [search, setSearch] = useState<string>('');
 
-  const [sortField, setSortField] = useState<SortField>('deadline');
+  const [sortField, setSortField] = useState<SortField>('handoff');
   const [sortAsc, setSortAsc] = useState(true);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -342,7 +354,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
           const ho = getCardHandoffDisplay(card, settings.escalationThresholdHours, escalationContact?.fullName, nowMs);
           if (ho.state !== 'escalated') return false;
         } else {
-          const liveStatus = getCardLifecycleStatus(card);
+          const liveStatus = getDashboardCardStatus(card);
           if (liveStatus.toLowerCase() !== selectedStatus.toLowerCase()) return false;
         }
       }
@@ -383,10 +395,9 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   // Sorted Cards
   const sortedCards = useMemo(() => {
     const statusOrder: Record<string, number> = {
-      Overdue: 0,
-      'In Progress': 1,
-      'To Do': 2,
-      Done: 3,
+      'In Progress': 0,
+      'To Do': 1,
+      Done: 2,
     };
     const handoffOrder: Record<string, number> = {
       escalated: 0,
@@ -403,11 +414,9 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
         comp = a.name.localeCompare(b.name);
       } else if (sortField === 'owner') {
         comp = (a.data.owner?.fullName || 'zzz').localeCompare(b.data.owner?.fullName || 'zzz');
-      } else if (sortField === 'deadline') {
-        comp = getCardDeadlineTimestamp(a) - getCardDeadlineTimestamp(b);
       } else if (sortField === 'status') {
-        const sa = statusOrder[getCardLifecycleStatus(a)] ?? 9;
-        const sb = statusOrder[getCardLifecycleStatus(b)] ?? 9;
+        const sa = statusOrder[getDashboardCardStatus(a)] ?? 9;
+        const sb = statusOrder[getDashboardCardStatus(b)] ?? 9;
         comp = sa - sb;
       } else if (sortField === 'handoff') {
         const ha = getCardHandoffDisplay(a, settings.escalationThresholdHours).state;
@@ -533,7 +542,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
         escapeCsv(c.data.owner?.fullName || 'Unassigned'),
         escapeCsv(getCardPriority(c)),
         escapeCsv(formatCardDeadline(c)),
-        escapeCsv(getCardLifecycleStatus(c)),
+        escapeCsv(getDashboardCardStatus(c)),
         escapeCsv(ho.label),
         escapeCsv(c.data.handoff?.status === 'pending' ? c.data.handoff.toMember.fullName : ''),
       ];
@@ -911,7 +920,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
               </p>
             </div>
 
-            {/* 3. TOP METRICS ROW (4 Cards + Circular Health Gauge) */}
+            {/* 3. TOP METRICS ROW (3 Cards + Circular Health Gauge) */}
             <div
               style={{
                 display: 'flex',
@@ -1021,55 +1030,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                   </div>
                 </button>
 
-                {/* Card 3: Overdue Tasks */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedStatus(selectedStatus === 'Overdue' ? 'all' : 'Overdue');
-                    setOnlyPendingHandoffs(false);
-                    setOnlyPendingTasks(false);
-                    setActiveTab('task');
-                  }}
-                  style={{
-                    textAlign: 'left',
-                    backgroundColor: '#FEF2F2',
-                    border: selectedStatus === 'Overdue' ? '2px solid #DC2626' : '1px solid #FEE2E2',
-                    borderRadius: '12px',
-                    padding: '14px 16px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                    cursor: 'pointer',
-                  }}
-                  title="Filter overdue tasks"
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div
-                      style={{
-                        width: '26px',
-                        height: '26px',
-                        borderRadius: '6px',
-                        backgroundColor: '#FEE2E2',
-                        color: '#DC2626',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                        <line x1="12" y1="9" x2="12" y2="13" />
-                        <line x1="12" y1="17" x2="12.01" y2="17" />
-                      </svg>
-                    </div>
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>Overdue Tasks</span>
-                  </div>
-                  <div style={{ fontSize: '28px', fontWeight: 800, color: '#0F172A', lineHeight: 1 }}>
-                    {metrics.overdueTasks}
-                  </div>
-                </button>
-
-                {/* Card 4: Pending Handoffs */}
+                {/* Card 3: Pending Handoffs */}
                 <button
                   type="button"
                   onClick={() => {
@@ -1132,7 +1093,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                   justifyContent: 'center',
                   margin: '0 auto',
                 }}
-                title={`${metrics.healthLabel}: ${metrics.overdueTasks} overdue, ${metrics.unownedTasks} unassigned, ${metrics.escalatedHandoffs} escalated handoffs`}
+                title={`${metrics.healthLabel}: ${metrics.unownedTasks} unassigned, ${metrics.escalatedHandoffs} escalated handoffs`}
               >
                 <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px', textAlign: 'center' }}>
                   Team Health Score
@@ -1700,7 +1661,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                         }}
                       >
                         <option value="all">All Statuses</option>
-                        <option value="Overdue">Overdue</option>
                         <option value="In Progress">In Progress</option>
                         <option value="To Do">To Do</option>
                         <option value="Done">Done</option>
@@ -1926,7 +1886,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                   </thead>
                   <tbody>
                     {sortedCards.map((card, idx) => {
-                      const status = getCardLifecycleStatus(card);
+                      const status = getDashboardCardStatus(card);
                       const handoff = getCardHandoffDisplay(
                         card,
                         settings.escalationThresholdHours,
@@ -1975,21 +1935,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
                           {/* Status */}
                           <td style={{ padding: '12px 16px' }}>
-                            {status === 'Overdue' ? (
-                              <span
-                                style={{
-                                  backgroundColor: '#FEE2E2',
-                                  color: '#DC2626',
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  padding: '3px 8px',
-                                  borderRadius: '6px',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                Overdue
-                              </span>
-                            ) : status === 'Done' ? (
+                            {status === 'Done' ? (
                               <span
                                 style={{
                                   backgroundColor: '#DCFCE7',
@@ -2195,7 +2141,6 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                   .filter((m) => selectedMember === 'all' || selectedMember === m.id)
                   .map((m) => {
                     const memberTasks = filteredCards.filter((c) => c.data.owner?.id === m.id);
-                    const overdueTasks = memberTasks.filter((c) => isCardOverdue(c));
                     const incomingHandoffs = cards.filter(
                       (c) => c.data.handoff?.status === 'pending' && c.data.handoff.toMember.id === m.id
                     );
@@ -2240,22 +2185,8 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                           </span>
                         </div>
 
-                        {(overdueTasks.length > 0 || incomingHandoffs.length > 0 || outgoingHandoffs.length > 0) && (
+                        {(incomingHandoffs.length > 0 || outgoingHandoffs.length > 0) && (
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
-                            {overdueTasks.length > 0 && (
-                              <span
-                                style={{
-                                  backgroundColor: '#FEE2E2',
-                                  color: '#DC2626',
-                                  fontSize: '10px',
-                                  fontWeight: 700,
-                                  padding: '2px 6px',
-                                  borderRadius: '4px',
-                                }}
-                              >
-                                {overdueTasks.length} overdue
-                              </span>
-                            )}
                             {incomingHandoffs.length > 0 && (
                               <span
                                 style={{
@@ -2289,7 +2220,7 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
                           {memberTasks.map((t) => {
-                            const tOverdue = isCardOverdue(t);
+                            const tStatus = getDashboardCardStatus(t);
                             return (
                               <div
                                 key={t.id}
@@ -2315,8 +2246,16 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
                                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {t.name}
                                 </span>
-                                <span style={{ fontSize: '10px', color: tOverdue ? '#DC2626' : '#64748B', fontWeight: tOverdue ? 700 : 500, flexShrink: 0, whiteSpace: 'nowrap' }}>
-                                  {formatCardDeadline(t)}
+                                <span
+                                  style={{
+                                    fontSize: '10px',
+                                    color: tStatus === 'Done' ? '#15803D' : tStatus === 'To Do' ? '#64748B' : '#2563EB',
+                                    fontWeight: 600,
+                                    flexShrink: 0,
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {tStatus}
                                 </span>
                               </div>
                             );
