@@ -476,7 +476,13 @@ export const CardSection: React.FC<CardSectionProps> = ({
         onAcceptHandoff={handleAcceptHandoff}
         onDeclineHandoff={handleDeclineHandoff}
         onCancelHandoff={handleCancelHandoff}
-        onSendReminder={handleSendReminder}
+        onSendReminder={
+          // Only the handoff sender (fromMember) should be able to send reminders to the recipient
+          data.handoff?.status === 'pending' &&
+          currentMember?.id === data.handoff.fromMember.id
+            ? handleSendReminder
+            : undefined
+        }
         onNotifyEscalation={handleNotifyEscalation}
         onAcknowledgeEscalation={handleAcknowledgeEscalation}
       />

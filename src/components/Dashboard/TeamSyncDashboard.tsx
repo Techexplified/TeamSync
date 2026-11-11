@@ -557,6 +557,14 @@ export const TeamSyncDashboard: React.FC<TeamSyncDashboardProps> = ({
   };
 
   const handleInlineSendReminder = async (card: BoardCardSummary) => {
+    // Only the handoff sender (fromMember) should be able to send reminders
+    if (
+      !currentMember ||
+      card.data.handoff?.status !== 'pending' ||
+      card.data.handoff.fromMember.id !== currentMember.id
+    ) {
+      return;
+    }
     const { nextData, didChange } = buildReminderData(
       card.data,
       settings.reminderThresholdHours,
